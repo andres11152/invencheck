@@ -1,0 +1,10 @@
+export enum UnidadMedida {
+  UNIDAD = 'UNIDAD',
+  KILOGRAMO = 'KILOGRAMO',
+  GRAMO = 'GRAMO',
+  LITRO = 'LITRO',
+  MILILITRO = 'MILILITRO',
+  PORCION = 'PORCION',
+  CANASTILLA = 'CANASTILLA',
+  CAJA = 'CAJA',
+}

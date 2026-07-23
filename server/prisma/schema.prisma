@@ -1,0 +1,209 @@
+// Esquema de dominio para InvenCheck (Toma Física de Inventario por Voz - Colsubsidio)
+// Refleja la operación real observada en BODEGAS Y STOCK.xlsx.
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UnidadMedida {
+  UNIDAD
+  KILOGRAMO
+  GRAMO
+  LITRO
+  MILILITRO
+  PORCION
+  CANASTILLA
+  CAJA
+}
+
+enum EstadoInventario {
+  BORRADOR
+  EN_AUDITORIA
+  CONCILIADO
+  ENVIADO_ERP
+}
+
+enum TipoAlerta {
+  ANOMALIA_CANTIDAD
+  STOCK_NEGATIVO
+  SKU_FALTANTE
+  UNIDAD_AMBIGUA
+}
+
+enum RolUsuario {
+  OPERARIO
+  AUDITOR
+  ADMIN
+}
+
+/// Cuenta de operador/auditor/admin con login real. `Inventario.usuarioId`
+/// y `auditorId` NO son FK hacia acá a propósito: son un registro histórico
+/// de quién hizo cada toma (como un log de auditoría) que debe sobrevivir
+/// aunque una cuenta se elimine más adelante; la identidad se resuelve y
+/// verifica en el momento de la petición vía el JWT, no por integridad
+/// referencial en la base de datos.
+model Usuario {
+  id           String     @id @default(cuid())
+  nombre       String
+  email        String     @unique
+  passwordHash String
+  rol          RolUsuario @default(OPERARIO)
+  activo       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@map("usuarios")
+}
+
+/// Bodega o punto de consumo físico (ej. "Bodega Principal Piscilago",
+/// "Restaurante Fuentes AYB"). `unidad` agrupa por unidad de negocio
+/// (ej. "Piscilago", "Hoteles") tal como aparece en la data real.
+model Almacen {
+  id        String   @id @default(cuid())
+  codigo    String   @unique
+  nombre    String
+  unidad    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventarios Inventario[]
+
+  @@index([unidad])
+  @@map("almacenes")
+}
+
+/// Ítem del catálogo maestro. `sku` es opcional porque ~260 artículos
+/// de la data real de Colsubsidio no tienen código y se identifican
+/// solo por nombre; por eso se indexa pero no se marca único.
+model Articulo {
+  id                String   @id @default(cuid())
+  /// Único cuando presente; Postgres permite múltiples NULL en una columna @unique,
+  /// lo que preserva el caso real de artículos sin código.
+  sku               String?  @unique
+  /// Único a nivel de catálogo maestro: es la clave de upsert cuando no hay SKU.
+  nombre            String   @unique
+  aliases           String[] @default([])
+  categoria         String
+  unidadEstd        UnidadMedida
+  /// Ítems con etiqueta (PA) de cocina: son preparaciones, no insumos crudos.
+  esProcesado       Boolean  @default(false)
+  /// Promedio histórico de stock, usado para detectar desviaciones (> 40%).
+  stockHistoricoAvg Float?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  itemsInventario ItemInventario[]
+  recetaItems     RecetaItem[]
+
+  @@map("articulos")
+}
+
+/// Toma física de un almacén en una fecha de corte.
+model Inventario {
+  id         String           @id @default(cuid())
+  almacenId  String
+  almacen    Almacen          @relation(fields: [almacenId], references: [id])
+  usuarioId  String
+  /// Nombre/id de quien está haciendo la auditoría ciega de este inventario
+  /// (solo informativo; el conteo real vive en `auditoriaCiega`).
+  auditorId  String?
+  estado     EstadoInventario @default(BORRADOR)
+  fechaCorte DateTime
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  /// Si ESTE Inventario ES la auditoría ciega de otro, apunta al original.
+  /// Conteo 100% independiente: es otra fila de Inventario/ItemInventario,
+  /// no se mezcla con la del operario original hasta comparar.
+  auditaAId      String?     @unique
+  auditaA        Inventario? @relation("AuditoriaCiega", fields: [auditaAId], references: [id], onDelete: Cascade)
+  auditoriaCiega Inventario? @relation("AuditoriaCiega")
+
+  items   ItemInventario[]
+  alertas AlertaInventario[]
+
+  @@index([almacenId])
+  @@index([estado])
+  @@map("inventarios")
+}
+
+/// Línea de conteo: compara el valor teórico del ERP/Symphony contra
+/// el conteo físico digitado o dictado por voz.
+model ItemInventario {
+  id           String       @id @default(cuid())
+  inventarioId String
+  inventario   Inventario   @relation(fields: [inventarioId], references: [id], onDelete: Cascade)
+  articuloId   String
+  articulo     Articulo     @relation(fields: [articuloId], references: [id])
+  /// Valor teórico proveniente del ERP (Symphony).
+  teorico      Float
+  conteoFisico Float
+  unidadUsada  UnidadMedida
+  /// true si la desviación o unidad reportada disparó una AlertaInventario.
+  esAnomalia   Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  alertas AlertaInventario[]
+
+  /// Una sola línea de conteo por artículo dentro de cada toma física;
+  /// redictar/recontar el mismo artículo actualiza la línea existente.
+  @@unique([inventarioId, articuloId])
+  @@index([inventarioId])
+  @@index([articuloId])
+  @@map("items_inventario")
+}
+
+/// Discrepancia detectada en una toma física (stock negativo del ERP,
+/// desviación > 40% frente al histórico, o unidad ambigua por voz).
+model AlertaInventario {
+  id               String          @id @default(cuid())
+  inventarioId     String
+  inventario       Inventario      @relation(fields: [inventarioId], references: [id], onDelete: Cascade)
+  itemInventarioId String?
+  itemInventario   ItemInventario? @relation(fields: [itemInventarioId], references: [id])
+  tipo             TipoAlerta
+  mensaje          String
+  resuelto         Boolean         @default(false)
+  createdAt        DateTime        @default(now())
+
+  @@index([inventarioId])
+  @@index([tipo])
+  @@map("alertas_inventario")
+}
+
+/// Menú estándar (ej. "Ajiaco Santafereño x 50 porciones") usado para
+/// la explosión de insumos a partir de las porciones vendidas.
+model Receta {
+  id        String   @id @default(cuid())
+  nombre    String
+  porciones Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items RecetaItem[]
+
+  @@map("recetas")
+}
+
+/// Insumo requerido por porción dentro de una receta.
+model RecetaItem {
+  id                 String   @id @default(cuid())
+  recetaId           String
+  receta             Receta   @relation(fields: [recetaId], references: [id], onDelete: Cascade)
+  articuloId         String
+  articulo           Articulo @relation(fields: [articuloId], references: [id])
+  cantidadPorPorcion Float
+  unidad             UnidadMedida
+
+  @@index([recetaId])
+  @@index([articuloId])
+  @@map("receta_items")
+}
