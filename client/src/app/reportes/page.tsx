@@ -79,7 +79,8 @@ function ReportesPageContent() {
     if (desde) params.set("desde", desde);
     if (hasta) params.set("hasta", hasta);
     const qs = params.toString();
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api";
+    const rawApiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api";
+    const apiUrl = rawApiUrl.endsWith("/api") ? rawApiUrl : `${rawApiUrl.replace(/\/$/, "")}/api`;
     window.open(`${apiUrl}/reportes/export-oracle-myinventory${qs ? `?${qs}` : ""}`, "_blank");
     toast.success("Exportando CSV para Oracle MyInventory");
   }

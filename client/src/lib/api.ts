@@ -11,7 +11,8 @@ import type {
 } from "./types";
 import { clearSession, getToken } from "./auth-storage";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api";
+const rawApiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api";
+const API_URL = rawApiUrl.endsWith("/api") ? rawApiUrl : `${rawApiUrl.replace(/\/$/, "")}/api`;
 
 export class ApiError extends Error {
   constructor(
