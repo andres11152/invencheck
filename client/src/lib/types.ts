@@ -130,7 +130,7 @@ export interface ItemNoMatcheado {
 
 export interface ProcesarTomaPorVozResult {
   inventario: InventarioDetalle;
-  fuenteIA: "GEMINI" | "REGLAS_LOCALES";
+  fuenteIA: "GEMINI" | "REGLAS_LOCALES" | "ESCANER_SKU";
   itemsMatcheados: ItemProcesadoResumen[];
   itemsNoMatcheados: ItemNoMatcheado[];
 }

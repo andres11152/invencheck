@@ -18,7 +18,13 @@ export async function createTestApp(): Promise<TestAppContext> {
 
   const app = moduleRef.createNestApplication();
   app.setGlobalPrefix('api');
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
   app.useGlobalFilters(new AllExceptionsFilter());
   await app.init();
 

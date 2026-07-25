@@ -109,8 +109,8 @@ export function inventarioToErpJson(inventario: InventarioDetalle) {
   };
 }
 
-export function descargarArchivo(contenido: string, nombre: string, mime: string) {
-  const blob = new Blob([contenido], { type: mime });
+export function descargarArchivo(contenido: string | Blob, nombre: string, mime?: string) {
+  const blob = contenido instanceof Blob ? contenido : new Blob([contenido], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

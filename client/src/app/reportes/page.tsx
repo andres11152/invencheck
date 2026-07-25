@@ -73,16 +73,18 @@ function ReportesPageContent() {
     toast.success("CSV exportado");
   }
 
-  function exportarOracleMyInventory() {
-    const params = new URLSearchParams();
-    if (almacenId && almacenId !== TODAS_LAS_BODEGAS) params.set("almacenId", almacenId);
-    if (desde) params.set("desde", desde);
-    if (hasta) params.set("hasta", hasta);
-    const qs = params.toString();
-    const rawApiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api";
-    const apiUrl = rawApiUrl.endsWith("/api") ? rawApiUrl : `${rawApiUrl.replace(/\/$/, "")}/api`;
-    window.open(`${apiUrl}/reportes/export-oracle-myinventory${qs ? `?${qs}` : ""}`, "_blank");
-    toast.success("Exportando CSV para Oracle MyInventory");
+  async function exportarOracleMyInventory() {
+    try {
+      const blob = await api.exportOracleMyInventoryCsv({
+        almacenId: almacenId && almacenId !== TODAS_LAS_BODEGAS ? almacenId : undefined,
+        desde: desde || undefined,
+        hasta: hasta || undefined,
+      });
+      descargarArchivo(blob, `oracle-myinventory-${new Date().toISOString().slice(0, 10)}.csv`);
+      toast.success("CSV Oracle MyInventory exportado");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "No se pudo exportar el CSV");
+    }
   }
 
   return (

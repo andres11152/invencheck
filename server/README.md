@@ -1,98 +1,116 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# InvenCheck — Server
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+[![CI](https://github.com/andres11152/invencheck/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/andres11152/invencheck/actions/workflows/ci.yml)
+[![tests](https://img.shields.io/badge/tests-94%20unit%20%2B%2021%20e2e-blue)](test)
+[![coverage threshold](https://img.shields.io/badge/coverage%20threshold-43%25%20stmts%20(CI--enforced)-success)](#tests)
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+API REST de InvenCheck — NestJS 11 + Prisma 7 (driver adapters) + PostgreSQL. Sirve el catálogo de artículos, el flujo de toma física por voz, la detección de anomalías y los reportes de variación bajo el prefijo `/api`.
 
-## Description
+> Documentación específica de este paquete. Para el contexto completo del monorepo (por qué existe cada decisión, el flujo de negocio end-to-end, y cómo se relaciona con `client`/`shared`) ver el [README raíz](../README.md).
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Stack
 
-## Project setup
+| Capa | Tecnología |
+|---|---|
+| Framework | NestJS 11 |
+| ORM | Prisma 7 (`prisma-client` generator, driver adapters vía `@prisma/adapter-pg`) |
+| Base de datos | PostgreSQL 16 (`pg_trgm` + `unaccent` para matching difuso) |
+| Auth | JWT (`@nestjs/jwt` + `passport-jwt`), guard global |
+| Validación | `class-validator` + `class-transformer`, `ValidationPipe({ whitelist: true, transform: true })` global |
+| Tests | Jest (unitarios + e2e), Supertest |
 
-```bash
-$ npm install
-```
+## Requisitos
 
-## Compile and run the project
+- Node.js 24.x
+- PostgreSQL 16 (vía `docker compose`, incluido en este paquete)
+
+## Puesta en marcha
 
 ```bash
-# development
-$ npm run start
+npm install                    # o `npm install` desde la raíz del monorepo
+cp .env.example .env           # completar JWT_SECRET y ERP_WEBHOOK_API_KEY
 
-# watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm run db:up                  # docker compose up -d
+npm run prisma:migrate         # aplica migraciones
+npm run prisma:seed            # WIPEA articulos/almacenes/inventarios, crea 5 artículos + 3 usuarios demo
+npm run prisma:import-excel    # reimporta el catálogo real (936 artículos, 48 bodegas) desde data/BODEGAS Y STOCK.xlsx
 ```
 
-## Run tests
+`prisma:seed` y `prisma:import-excel` corren en ese orden siempre: el seed resetea el catálogo a fixtures de prueba, así que el catálogo real hay que reimportarlo después de cada seed.
+
+### Variables de entorno
+
+| Variable | Requerida | Descripción |
+|---|---|---|
+| `DATABASE_URL` | Sí | Cadena de conexión a Postgres |
+| `JWT_SECRET` | Sí | El proceso falla al arrancar si falta. Generar con `openssl rand -hex 32` |
+| `ERP_WEBHOOK_API_KEY` | Sí | El proceso falla al arrancar si falta. Autentica `POST /integration/webhook/*` |
+| `GEMINI_API_KEY` | No | Sin ella, el dictado de voz usa el parser local en español (`voice-parser.util.ts`) |
+| `GEMINI_MODEL` | No | Default `gemini-3.5-flash` |
+| `JWT_EXPIRES_IN_SECONDS` | No | Default 43200 (12h) |
+| `CORS_ORIGIN` | No | Default `http://localhost:3001` |
+| `ERP_INTEGRATION_URL` | No | Endpoint del ERP externo para `IntegrationErpService.enviarInventarioAERP`; default apunta al mock local |
+
+Ver `.env.example` para la plantilla completa. Nunca reutilizar los valores de ejemplo en un ambiente real.
+
+## Ejecución
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run start:dev    # watch mode, :3000, prefijo /api
+npm run start        # sin watch
+npm run start:prod   # requiere `npm run build` primero (dist/main.js)
 ```
 
-## Deployment
+Docker Desktop debe estar corriendo (`npm run db:up`) antes de levantar el server.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+## Tests
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm test                     # unitarios (Jest)
+npm run test:cov             # unitarios + reporte de cobertura + umbral (el que corre en CI)
+npx jest <nombre>.spec.ts    # un solo archivo
+npm run test:e2e             # e2e contra Postgres real — ver setup abajo
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+**Umbral de cobertura** (`jest.coverageThreshold` en `package.json`): 43% statements / 41% branches / 25% funciones / 42% líneas, sobre `src/` excluyendo el cliente Prisma generado, `*.module.ts` (wiring sin lógica) y `main.ts`. Se aplica con `test:cov` y falla el build en CI si baja. No es 100% a propósito — el objetivo es proteger la lógica de negocio real (anomalías, autorización, guards, agregaciones), no inflar el número con getters y DTOs.
 
-## Resources
+**e2e (`test/*.e2e-spec.ts`)** — 7 specs, 21 tests, contra Postgres real vía `Test.createTestingModule` + Supertest (no mocks): login, matching difuso (`pg_trgm`/`f_unaccent`, imposible de mockear con sentido), concurrencia de conteo (prueba que el `increment` atómico no pierde escrituras), el flujo central de bloqueo por anomalía, autorización por rol, agregación de reportes, y los webhooks de integración ERP.
 
-Check out a few resources that may come in handy when working with NestJS:
+Setup local:
+```bash
+# con Postgres ya arriba (npm run db:up)
+docker compose exec postgres psql -U invencheck -d invencheck -c "CREATE DATABASE invencheck_test;"
+cp .env.example .env.test    # ajustar DATABASE_URL a invencheck_test; dejar GEMINI_API_KEY vacío
+npm run test:e2e             # aplica migraciones automáticamente (pretest:e2e) y corre los specs
+```
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+`.env.test` está gitignored — en CI las mismas variables se inyectan como env del job contra el Postgres del `services` container, sin necesidad de ese archivo.
 
-## Support
+## Arquitectura
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+Cada módulo en `src/modules/` (`almacenes`, `articulos`, `ai-engine`, `inventarios`, `reportes`, `integration`, `auth`, `health`) sigue **Controller → Service → Repository**. Los repositorios devuelven tipos derivados de Prisma vía `satisfies Prisma.XInclude` + `Prisma.XGetPayload<{...}>`, nunca interfaces declaradas a mano.
 
-## Stay in touch
+- **Auth**: `JwtAuthGuard` global (`APP_GUARD`) — toda ruta exige JWT salvo `@Public()`. `RolesGuard` restringe `PATCH /inventarios/:id/estado` y `POST /inventarios/:id/auditoria-ciega` a `AUDITOR`/`ADMIN`. `usuarioId`/`auditorId` siempre se derivan del JWT vía `@CurrentUser()`, nunca del body.
+- **Integración ERP**: `POST /integration/webhook/sync-articulo`/`sync-almacen` usan `ApiKeyGuard` (header `X-Api-Key`) en vez de JWT — llamador sistema-a-sistema, no un usuario.
+- **Detección de anomalías** (`AnomaliasService.evaluarConteo`): unidad ambigua sin factor de conversión → `UNIDAD_AMBIGUA`; `teorico < 0` → `STOCK_NEGATIVO`; variación fuera de `[-80%, +200%]` vs. el promedio histórico de esa bodega (con fallback al promedio global) → `ANOMALIA_CANTIDAD`. Cualquier alerta sin resolver bloquea la transición a `CONCILIADO`/`ENVIADO_ERP`, verificado en `InventarioService.cambiarEstado`.
+- **Concurrencia**: `InventarioRepository.incrementarConteo` usa `{ increment: delta }` atómico de Prisma, no leer-sumar-escribir — evita lost updates entre dictados simultáneos del mismo artículo.
+- **SQL crudo**: solo donde el query builder no alcanza — matching difuso (`articulo.repository.ts`, `pg_trgm` + `unaccent`) y el reporte agregado de variación (`reporte.repository.ts`), siempre vía `Prisma.sql` parametrizado.
+- **Dictado de voz**: `AiEngineService.procesarDictadoVoz` intenta Gemini (si `GEMINI_API_KEY` está seteada, con reintentos/backoff) y cae al parser local en español (`voice-parser.util.ts`) — el fallback real de la demo, no un stub.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+## Estructura
 
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+```
+src/
+  common/          filtro global de excepciones, utils compartidos (texto, conversión de unidad)
+  generated/prisma  cliente Prisma generado (no editar a mano)
+  modules/         un directorio por dominio, Controller → Service → Repository
+  prisma/          PrismaService (driver adapter pg)
+  scripts/         import-excel.ts — ingesta del catálogo real desde data/BODEGAS Y STOCK.xlsx
+prisma/
+  schema.prisma
+  migrations/
+  seed.ts
+test/
+  *.e2e-spec.ts
+  utils/           bootstrap de app de test, seeds programáticos, helpers de auth/HTTP
+```

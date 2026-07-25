@@ -1,15 +1,22 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InventarioRepository } from '../inventarios/inventario.repository';
 import { EstadoInventario } from '../../generated/prisma/client';
+import type { EnvironmentVariables } from '../../config/env.validation';
 
 @Injectable()
 export class IntegrationErpService {
   private readonly logger = new Logger(IntegrationErpService.name);
-  private readonly erpUrl =
-    process.env.ERP_INTEGRATION_URL ??
-    'http://localhost:3000/api/integration/mock-erp/receive-inventario';
+  private readonly erpUrl: string;
 
-  constructor(private readonly inventarioRepository: InventarioRepository) {}
+  constructor(
+    private readonly inventarioRepository: InventarioRepository,
+    configService: ConfigService<EnvironmentVariables, true>,
+  ) {
+    this.erpUrl =
+      configService.get('ERP_INTEGRATION_URL', { infer: true }) ??
+      'http://localhost:3000/api/integration/mock-erp/receive-inventario';
+  }
 
   async enviarInventarioAERP(
     id: string,

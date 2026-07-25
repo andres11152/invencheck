@@ -4,7 +4,9 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Request } from 'express';
+import type { EnvironmentVariables } from '../../../config/env.validation';
 
 /**
  * Frontera de confianza sistema-a-sistema (el ERP externo llamando a
@@ -13,16 +15,20 @@ import type { Request } from 'express';
  */
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
+  constructor(
+    private readonly configService: ConfigService<EnvironmentVariables, true>,
+  ) {}
+
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest<Request>();
     const providedKey = request.headers['x-api-key'];
-    const expectedKey = process.env.ERP_WEBHOOK_API_KEY;
+    // ERP_WEBHOOK_API_KEY es requerida en EnvironmentVariables — si faltara,
+    // la app no habría llegado a arrancar (ver env.validation.ts), así que
+    // acá siempre hay un valor con el que comparar.
+    const expectedKey = this.configService.get('ERP_WEBHOOK_API_KEY', {
+      infer: true,
+    });
 
-    if (!expectedKey) {
-      throw new UnauthorizedException(
-        'ERP_WEBHOOK_API_KEY no está configurado en el servidor',
-      );
-    }
     if (providedKey !== expectedKey) {
       throw new UnauthorizedException(
         'API key inválida o ausente (header X-Api-Key)',

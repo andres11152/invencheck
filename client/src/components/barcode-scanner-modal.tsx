@@ -9,6 +9,35 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+// La Barcode Detection API es experimental (Chrome/Edge) y todavía no forma
+// parte de lib.dom de TypeScript — mismo patrón que useSpeechRecognition
+// para declarar el tipo mínimo que se necesita.
+interface DetectedBarcodeLike {
+  rawValue: string;
+}
+interface BarcodeDetectorLike {
+  detect(source: HTMLVideoElement): Promise<DetectedBarcodeLike[]>;
+}
+type BarcodeDetectorConstructor = new (options?: {
+  formats?: string[];
+}) => BarcodeDetectorLike;
+
+declare global {
+  interface Window {
+    BarcodeDetector?: BarcodeDetectorConstructor;
+  }
+}
+
+const FORMATOS_SOPORTADOS = [
+  "ean_13",
+  "ean_8",
+  "upc_a",
+  "upc_e",
+  "code_128",
+  "code_39",
+  "qr_code",
+];
+
 export function BarcodeScannerModal({
   abierto,
   onCerrar,
@@ -16,11 +45,14 @@ export function BarcodeScannerModal({
 }: {
   abierto: boolean;
   onCerrar: () => void;
-  onEscanear: (textoDictado: string) => void;
+  onEscanear: (sku: string, cantidad: number) => void;
 }) {
   const [skuDetectado, setSkuDetectado] = useState("");
   const [cantidad, setCantidad] = useState("1");
   const [camaraActiva, setCamaraActiva] = useState(false);
+  const [detectorDisponible] = useState(
+    () => typeof window !== "undefined" && "BarcodeDetector" in window,
+  );
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -38,6 +70,40 @@ export function BarcodeScannerModal({
       detenerCamara();
     };
   }, [abierto]);
+
+  // Bucle de decodificación: mientras la cámara esté activa y no se haya
+  // detectado nada todavía, intenta leer un código por frame. Se detiene
+  // apenas encuentra uno — el operario confirma cantidad y registra, no se
+  // re-escanea automáticamente encima del resultado ya detectado.
+  useEffect(() => {
+    if (!camaraActiva || !detectorDisponible || skuDetectado) return;
+
+    const Ctor = window.BarcodeDetector;
+    if (!Ctor) return;
+    const detector = new Ctor({ formats: FORMATOS_SOPORTADOS });
+    let cancelado = false;
+    let rafId: number;
+
+    async function tick() {
+      if (cancelado || !videoRef.current) return;
+      try {
+        const codigos = await detector.detect(videoRef.current);
+        if (codigos.length > 0 && !cancelado) {
+          setSkuDetectado(codigos[0].rawValue);
+          return;
+        }
+      } catch {
+        // Frame todavía no decodificable (video no listo) — se reintenta en el próximo tick.
+      }
+      if (!cancelado) rafId = requestAnimationFrame(tick);
+    }
+
+    rafId = requestAnimationFrame(tick);
+    return () => {
+      cancelado = true;
+      cancelAnimationFrame(rafId);
+    };
+  }, [camaraActiva, detectorDisponible, skuDetectado]);
 
   async function iniciarCamara() {
     try {
@@ -73,7 +139,7 @@ export function BarcodeScannerModal({
       return;
     }
 
-    onEscanear(`${cant} unidad de sku ${sku}`);
+    onEscanear(sku, cant);
     onCerrar();
   }
 
@@ -100,8 +166,18 @@ export function BarcodeScannerModal({
                 />
                 {/* Cuadro de enfoque de escaneo */}
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="h-28 w-44 rounded-lg border-2 border-dashed border-secondary bg-secondary/10 animate-pulse" />
+                  <div
+                    className={`h-28 w-44 rounded-lg border-2 border-dashed bg-secondary/10 ${
+                      skuDetectado ? "border-success" : "border-secondary animate-pulse"
+                    }`}
+                  />
                 </div>
+                {!detectorDisponible && (
+                  <p className="absolute bottom-1.5 left-1.5 right-1.5 rounded bg-black/70 px-2 py-1 text-center text-[10px] text-warning">
+                    Tu navegador no puede leer códigos automáticamente (usa Chrome/Edge) — escribe
+                    el SKU abajo.
+                  </p>
+                )}
               </>
             ) : (
               <div className="flex flex-col items-center justify-center gap-2 text-center text-xs text-muted-foreground p-4">

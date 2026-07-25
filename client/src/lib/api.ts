@@ -1,4 +1,4 @@
-import type { EstadoInventario } from "@invencheck/shared";
+import type { EstadoInventario, UnidadMedida } from "@invencheck/shared";
 import type {
   Almacen,
   AlertaInventario,
@@ -24,14 +24,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function fetchAutenticado(path: string, init?: RequestInit): Promise<Response> {
   const token = getToken();
   let response: Response;
   try {
     response = await fetch(`${API_URL}${path}`, {
       ...init,
       headers: {
-        "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...init?.headers,
       },
@@ -52,15 +51,54 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       if (typeof window !== "undefined") window.location.href = "/login";
     }
 
-    const body = (await response.json().catch(() => null)) as { message?: string } | null;
-    const message = Array.isArray(body?.message)
-      ? body.message.join(", ")
-      : (body?.message ?? `Error ${response.status}`);
+    const rawBody = await response.text().catch(() => "");
+    const parsed = (() => {
+      try {
+        return JSON.parse(rawBody) as { message?: string | string[] };
+      } catch {
+        return null;
+      }
+    })();
+    const message = Array.isArray(parsed?.message)
+      ? parsed.message.join(", ")
+      : (parsed?.message ?? (rawBody || `Error ${response.status}`));
     throw new ApiError(message, response.status);
   }
 
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetchAutenticado(path, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...init?.headers },
+  });
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+/**
+ * Para endpoints que devuelven un archivo (CSV) en vez de JSON — no se puede
+ * usar `request<T>` porque este hace `response.json()` incondicionalmente.
+ * Sigue pasando por el mismo `fetchAutenticado` (adjunta el JWT, maneja
+ * 401/red igual que el resto de la API) en vez de un `window.open()` directo,
+ * que nunca lleva el header `Authorization` y por eso el endpoint responde
+ * 401 en una pestaña en blanco.
+ */
+async function requestBlob(path: string): Promise<Blob> {
+  const response = await fetchAutenticado(path);
+  return response.blob();
+}
+
+type VariacionParams = { almacenId?: string; desde?: string; hasta?: string };
+
+function buildVariacionQueryString(params: VariacionParams): string {
+  const query = new URLSearchParams();
+  if (params.almacenId) query.set("almacenId", params.almacenId);
+  if (params.desde) query.set("desde", params.desde);
+  if (params.hasta) query.set("hasta", params.hasta);
+  const qs = query.toString();
+  return qs ? `?${qs}` : "";
 }
 
 export const api = {
@@ -87,6 +125,14 @@ export const api = {
       body: JSON.stringify({ texto }),
     }),
 
+  // Entrada por SKU exacto (escáner de código de barras) — match sin
+  // ambigüedad, a diferencia de procesarVoz con texto libre.
+  procesarSku: (id: string, data: { sku: string; cantidad: number; unidadDictada?: UnidadMedida }) =>
+    request<ProcesarTomaPorVozResult>(`/inventarios/${id}/procesar-sku`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   cambiarEstado: (id: string, estado: EstadoInventario) =>
     request<Inventario>(`/inventarios/${id}/estado`, {
       method: "PATCH",
@@ -106,12 +152,9 @@ export const api = {
   getComparacionAuditoria: (id: string) =>
     request<ComparacionAuditoriaResult>(`/inventarios/${id}/comparacion-auditoria`),
 
-  getReporteVariacion: (params: { almacenId?: string; desde?: string; hasta?: string }) => {
-    const query = new URLSearchParams();
-    if (params.almacenId) query.set("almacenId", params.almacenId);
-    if (params.desde) query.set("desde", params.desde);
-    if (params.hasta) query.set("hasta", params.hasta);
-    const qs = query.toString();
-    return request<VariacionArticulo[]>(`/reportes/variacion${qs ? `?${qs}` : ""}`);
-  },
+  getReporteVariacion: (params: VariacionParams) =>
+    request<VariacionArticulo[]>(`/reportes/variacion${buildVariacionQueryString(params)}`),
+
+  exportOracleMyInventoryCsv: (params: VariacionParams) =>
+    requestBlob(`/reportes/export-oracle-myinventory${buildVariacionQueryString(params)}`),
 };

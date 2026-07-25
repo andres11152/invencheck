@@ -2,10 +2,11 @@ import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import { InventarioService } from './inventario.service';
 import { CrearInventarioDto } from './dto/crear-inventario.dto';
 import { ProcesarVozDto } from './dto/procesar-voz.dto';
+import { ProcesarSkuDto } from './dto/procesar-sku.dto';
 import { CambiarEstadoDto } from './dto/cambiar-estado.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { RolUsuario } from '../../generated/prisma/client';
+import { RolUsuario, UnidadMedida } from '../../generated/prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
 
 @Controller('inventarios')
@@ -32,6 +33,19 @@ export class InventarioController {
   @Post(':id/procesar-voz')
   procesarVoz(@Param('id') id: string, @Body() dto: ProcesarVozDto) {
     return this.inventarioService.procesarTomaPorVoz(id, dto.texto);
+  }
+
+  // Entrada por SKU exacto (escáner de código de barras) — no pasa por el
+  // matching difuso de `procesar-voz`, ver el comentario en
+  // InventarioService.procesarConteoPorSku.
+  @Post(':id/procesar-sku')
+  procesarSku(@Param('id') id: string, @Body() dto: ProcesarSkuDto) {
+    return this.inventarioService.procesarConteoPorSku(
+      id,
+      dto.sku,
+      dto.cantidad,
+      dto.unidadDictada ?? UnidadMedida.UNIDAD,
+    );
   }
 
   // Consolidar/enviar a ERP es una acción de cierre supervisado: quien contó

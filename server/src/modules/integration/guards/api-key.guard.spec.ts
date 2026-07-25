@@ -1,5 +1,7 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
 import { ApiKeyGuard } from './api-key.guard';
+import type { EnvironmentVariables } from '../../../config/env.validation';
 
 function buildContext(
   headers: Record<string, string | undefined>,
@@ -11,25 +13,16 @@ function buildContext(
   } as unknown as ExecutionContext;
 }
 
+function buildGuard(expectedKey: string) {
+  const configService = {
+    get: jest.fn().mockReturnValue(expectedKey),
+  } as unknown as ConfigService<EnvironmentVariables, true>;
+  return new ApiKeyGuard(configService);
+}
+
 describe('ApiKeyGuard', () => {
-  const ORIGINAL_ENV = process.env.ERP_WEBHOOK_API_KEY;
-
-  afterEach(() => {
-    process.env.ERP_WEBHOOK_API_KEY = ORIGINAL_ENV;
-  });
-
-  it('rechaza si ERP_WEBHOOK_API_KEY no está configurado en el servidor', () => {
-    delete process.env.ERP_WEBHOOK_API_KEY;
-    const guard = new ApiKeyGuard();
-
-    expect(() =>
-      guard.canActivate(buildContext({ 'x-api-key': 'cualquiera' })),
-    ).toThrow(UnauthorizedException);
-  });
-
   it('rechaza si falta el header X-Api-Key', () => {
-    process.env.ERP_WEBHOOK_API_KEY = 'la-key-correcta';
-    const guard = new ApiKeyGuard();
+    const guard = buildGuard('la-key-correcta');
 
     expect(() => guard.canActivate(buildContext({}))).toThrow(
       UnauthorizedException,
@@ -37,8 +30,7 @@ describe('ApiKeyGuard', () => {
   });
 
   it('rechaza si la key no coincide', () => {
-    process.env.ERP_WEBHOOK_API_KEY = 'la-key-correcta';
-    const guard = new ApiKeyGuard();
+    const guard = buildGuard('la-key-correcta');
 
     expect(() =>
       guard.canActivate(buildContext({ 'x-api-key': 'otra-key' })),
@@ -46,8 +38,7 @@ describe('ApiKeyGuard', () => {
   });
 
   it('permite el acceso si la key coincide', () => {
-    process.env.ERP_WEBHOOK_API_KEY = 'la-key-correcta';
-    const guard = new ApiKeyGuard();
+    const guard = buildGuard('la-key-correcta');
 
     expect(
       guard.canActivate(buildContext({ 'x-api-key': 'la-key-correcta' })),

@@ -35,7 +35,7 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
   const [procesandoVoz, setProcesandoVoz] = useState(false);
   const [voiceResetKey, setVoiceResetKey] = useState(0);
   const [ultimaFuenteIA, setUltimaFuenteIA] = useState<
-    "GEMINI" | "REGLAS_LOCALES" | null
+    "GEMINI" | "REGLAS_LOCALES" | "ESCANER_SKU" | null
   >(null);
 
   // Cola de ids de ItemInventario con anomalía pendiente de revisar (por
@@ -165,6 +165,26 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
     }
   }
 
+  // A diferencia de handleProcesar, no encola offline: identificar el
+  // artículo por SKU requiere ir al servidor sí o sí (no hay parser local
+  // equivalente para códigos de barras), así que sin conexión se le pide al
+  // operario usar dictado por voz/texto, que sí tiene fallback offline.
+  async function handleProcesarSku(sku: string, cantidad: number) {
+    setProcesandoVoz(true);
+    try {
+      const resultado = await api.procesarSku(inventarioId, { sku, cantidad });
+      aplicarResultado(resultado, false);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 0) {
+        toast.error("Sin conexión: el escaneo por SKU necesita señal. Usa dictado por voz/texto.");
+      } else {
+        toast.error(err instanceof ApiError ? err.message : "No se pudo procesar el SKU escaneado");
+      }
+    } finally {
+      setProcesandoVoz(false);
+    }
+  }
+
   async function handleConfirmarAnomalia() {
     if (!anomaliaModalEntrada) return;
     try {
@@ -281,6 +301,7 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
           <VoiceCapture
             key={voiceResetKey}
             onProcesar={handleProcesar}
+            onEscanearSku={handleProcesarSku}
             procesando={procesandoVoz}
             autoFocusTexto={voiceResetKey > 0}
             fuenteIA={ultimaFuenteIA}

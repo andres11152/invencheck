@@ -260,15 +260,7 @@ export class InventarioService {
     inventarioId: string,
     textoVoz: string,
   ): Promise<ProcesarTomaPorVozResult> {
-    const inventario = await this.inventarioRepository.findById(inventarioId);
-    if (!inventario) {
-      throw new NotFoundException(`Inventario ${inventarioId} no encontrado`);
-    }
-    if (ESTADOS_INMUTABLES.has(inventario.estado)) {
-      throw new BadRequestException(
-        `El inventario ya fue ${inventario.estado} y no admite nuevos conteos`,
-      );
-    }
+    const inventario = await this.validarInventarioEditable(inventarioId);
 
     const { items, fuente } =
       await this.aiEngineService.procesarDictadoVoz(textoVoz);
@@ -291,115 +283,17 @@ export class InventarioService {
         continue;
       }
 
-      const articulo = match.articulo;
-
-      // El ítem puede ya haber sido contado antes en esta misma toma (ej. en
-      // otro estante) — la nueva cantidad dictada se ACUMULA a la previa en
-      // vez de sobreescribirse. La unidad se convierte ANTES de sumar (nunca
-      // se mezclan kg + gramos como números crudos) y la suma en sí se hace
-      // con un `increment` atómico en Postgres, no leyendo-sumando-escribiendo
-      // en código de aplicación: así dos dictados casi simultáneos del mismo
-      // artículo no se pisan entre sí (lost update).
-      const factor =
-        item.unidadDictada === articulo.unidadEstd
-          ? 1
-          : factorConversion(item.unidadDictada, articulo.unidadEstd);
-
-      if (factor === undefined) {
-        const mensaje = `Se dictó en ${item.unidadDictada} pero "${articulo.nombre}" se maneja en ${articulo.unidadEstd}; no hay conversión automática disponible.`;
-        const itemInventario =
-          await this.inventarioRepository.marcarUnidadAmbigua({
-            inventarioId,
-            articuloId: articulo.id,
-            teoricoInicial: articulo.stockHistoricoAvg ?? 0,
-            cantidadDictada: item.cantidad,
-            unidadDictada: item.unidadDictada,
-          });
-        await this.inventarioRepository.crearAlertas([
-          {
-            inventarioId,
-            itemInventarioId: itemInventario.id,
-            tipo: TipoAlerta.UNIDAD_AMBIGUA,
-            mensaje,
-          },
-        ]);
-
-        itemsMatcheados.push({
+      itemsMatcheados.push(
+        await this.procesarLineaArticulo({
+          inventarioId,
+          almacenId: inventario.almacenId,
+          articulo: match.articulo,
           articuloBusqueda: item.articuloBusqueda,
-          articulo,
           cantidadDictada: item.cantidad,
           unidadDictada: item.unidadDictada,
-          teorico: itemInventario.teorico,
-          conteoFisico: itemInventario.conteoFisico,
-          unidadUsada: itemInventario.unidadUsada,
-          esAnomalia: true,
-          alertas: [mensaje],
           scoreMatch: match.score,
-        });
-        continue;
-      }
-
-      const delta = round2(item.cantidad * factor);
-      const itemInventario = await this.inventarioRepository.incrementarConteo({
-        inventarioId,
-        articuloId: articulo.id,
-        delta,
-        unidadUsada: articulo.unidadEstd,
-        teoricoInicial: articulo.stockHistoricoAvg ?? 0,
-      });
-
-      // El "patrón normal" para detectar anomalías debe ser el de ESTA
-      // bodega, no un promedio global mezclado entre las ~48 bodegas del
-      // catálogo (una tiene normalmente 9 cajas, otra 90 — promediarlas no
-      // sirve para juzgar ninguna de las dos). Si esta bodega no tiene
-      // historial propio de este artículo todavía, evaluarConteo cae solo
-      // al promedio global (`articulo.stockHistoricoAvg`).
-      const promedioHistoricoBodega =
-        await this.inventarioRepository.promedioHistoricoPorAlmacen(
-          articulo.id,
-          inventario.almacenId,
-          inventarioId,
-        );
-
-      // `unidadDictada: articulo.unidadEstd` porque `itemInventario.conteoFisico`
-      // ya viene convertido y acumulado — evita que evaluarConteo lo convierta
-      // una segunda vez (su Regla 3 solo actúa si unidadDictada !== unidadEstd).
-      const evaluacion = this.anomaliasService.evaluarConteo({
-        articulo,
-        teorico: itemInventario.teorico,
-        conteoFisico: itemInventario.conteoFisico,
-        unidadDictada: articulo.unidadEstd,
-        promedioHistoricoBodega,
-      });
-
-      await this.inventarioRepository.actualizarEsAnomalia(
-        itemInventario.id,
-        evaluacion.esAnomalia,
+        }),
       );
-
-      if (evaluacion.alertas.length > 0) {
-        await this.inventarioRepository.crearAlertas(
-          evaluacion.alertas.map((alerta) => ({
-            inventarioId,
-            itemInventarioId: itemInventario.id,
-            tipo: alerta.tipo,
-            mensaje: alerta.mensaje,
-          })),
-        );
-      }
-
-      itemsMatcheados.push({
-        articuloBusqueda: item.articuloBusqueda,
-        articulo,
-        cantidadDictada: item.cantidad,
-        unidadDictada: item.unidadDictada,
-        teorico: itemInventario.teorico,
-        conteoFisico: evaluacion.conteoFisico,
-        unidadUsada: evaluacion.unidadUsada,
-        esAnomalia: evaluacion.esAnomalia,
-        alertas: evaluacion.alertas.map((a) => a.mensaje),
-        scoreMatch: match.score,
-      });
     }
 
     return {
@@ -407,6 +301,206 @@ export class InventarioService {
       fuenteIA: fuente,
       itemsMatcheados,
       itemsNoMatcheados,
+    };
+  }
+
+  /**
+   * Entrada alterna al mismo flujo de conteo, pero por SKU exacto (escáner
+   * de código de barras) en vez de texto dictado. A diferencia de
+   * `procesarTomaPorVoz`, NO pasa por el matching difuso: un código de
+   * barras ya identifica el artículo sin ambigüedad, así que forzarlo por el
+   * pipeline de texto libre (como se hacía antes, armando un string tipo
+   * "1 unidad de sku 12345" y mandándolo a `normalizarEntradaHablada`) es
+   * incorrecto — `findBestMatches` solo compara contra `nombre`/`aliases`,
+   * nunca contra la columna `sku`, así que ese string terminaba matcheando
+   * (o no) por casualidad contra el nombre de un artículo cualquiera.
+   */
+  async procesarConteoPorSku(
+    inventarioId: string,
+    sku: string,
+    cantidad: number,
+    unidadDictada: UnidadMedida,
+  ): Promise<ProcesarTomaPorVozResult> {
+    const inventario = await this.validarInventarioEditable(inventarioId);
+
+    const itemsMatcheados: ItemProcesadoResumen[] = [];
+    const itemsNoMatcheados: ItemNoMatcheado[] = [];
+
+    const articulo = await this.articuloService.findBySku(sku);
+    if (!articulo) {
+      itemsNoMatcheados.push({
+        articuloBusqueda: sku,
+        cantidadDictada: cantidad,
+        unidadDictada,
+        motivo: `Ningún artículo del catálogo tiene el SKU "${sku}"`,
+      });
+    } else {
+      itemsMatcheados.push(
+        await this.procesarLineaArticulo({
+          inventarioId,
+          almacenId: inventario.almacenId,
+          articulo,
+          articuloBusqueda: `SKU ${sku}`,
+          cantidadDictada: cantidad,
+          unidadDictada,
+          scoreMatch: 1, // match exacto por SKU, no difuso
+        }),
+      );
+    }
+
+    return {
+      inventario: await this.findDetalle(inventarioId),
+      fuenteIA: 'ESCANER_SKU',
+      itemsMatcheados,
+      itemsNoMatcheados,
+    };
+  }
+
+  private async validarInventarioEditable(
+    inventarioId: string,
+  ): Promise<Inventario> {
+    const inventario = await this.inventarioRepository.findById(inventarioId);
+    if (!inventario) {
+      throw new NotFoundException(`Inventario ${inventarioId} no encontrado`);
+    }
+    if (ESTADOS_INMUTABLES.has(inventario.estado)) {
+      throw new BadRequestException(
+        `El inventario ya fue ${inventario.estado} y no admite nuevos conteos`,
+      );
+    }
+    return inventario;
+  }
+
+  /**
+   * Ya con el `Articulo` resuelto (por matching difuso o por SKU exacto):
+   * convierte unidad, acumula el conteo de forma atómica, evalúa anomalías
+   * contra el histórico de la bodega y persiste alertas. Compartido por
+   * `procesarTomaPorVoz` y `procesarConteoPorSku` — la única diferencia
+   * entre ambos flujos es CÓMO se llega al `Articulo`, no qué se hace una
+   * vez identificado.
+   */
+  private async procesarLineaArticulo(params: {
+    inventarioId: string;
+    almacenId: string;
+    articulo: Articulo;
+    articuloBusqueda: string;
+    cantidadDictada: number;
+    unidadDictada: UnidadMedida;
+    scoreMatch: number;
+  }): Promise<ItemProcesadoResumen> {
+    const {
+      inventarioId,
+      almacenId,
+      articulo,
+      cantidadDictada,
+      unidadDictada,
+    } = params;
+
+    // El ítem puede ya haber sido contado antes en esta misma toma (ej. en
+    // otro estante) — la nueva cantidad dictada se ACUMULA a la previa en
+    // vez de sobreescribirse. La unidad se convierte ANTES de sumar (nunca
+    // se mezclan kg + gramos como números crudos) y la suma en sí se hace
+    // con un `increment` atómico en Postgres, no leyendo-sumando-escribiendo
+    // en código de aplicación: así dos dictados casi simultáneos del mismo
+    // artículo no se pisan entre sí (lost update).
+    const factor =
+      unidadDictada === articulo.unidadEstd
+        ? 1
+        : factorConversion(unidadDictada, articulo.unidadEstd);
+
+    if (factor === undefined) {
+      const mensaje = `Se dictó en ${unidadDictada} pero "${articulo.nombre}" se maneja en ${articulo.unidadEstd}; no hay conversión automática disponible.`;
+      const itemInventario =
+        await this.inventarioRepository.marcarUnidadAmbigua({
+          inventarioId,
+          articuloId: articulo.id,
+          teoricoInicial: articulo.stockHistoricoAvg ?? 0,
+          cantidadDictada,
+          unidadDictada,
+        });
+      await this.inventarioRepository.crearAlertas([
+        {
+          inventarioId,
+          itemInventarioId: itemInventario.id,
+          tipo: TipoAlerta.UNIDAD_AMBIGUA,
+          mensaje,
+        },
+      ]);
+
+      return {
+        articuloBusqueda: params.articuloBusqueda,
+        articulo,
+        cantidadDictada,
+        unidadDictada,
+        teorico: itemInventario.teorico,
+        conteoFisico: itemInventario.conteoFisico,
+        unidadUsada: itemInventario.unidadUsada,
+        esAnomalia: true,
+        alertas: [mensaje],
+        scoreMatch: params.scoreMatch,
+      };
+    }
+
+    const delta = round2(cantidadDictada * factor);
+    const itemInventario = await this.inventarioRepository.incrementarConteo({
+      inventarioId,
+      articuloId: articulo.id,
+      delta,
+      unidadUsada: articulo.unidadEstd,
+      teoricoInicial: articulo.stockHistoricoAvg ?? 0,
+    });
+
+    // El "patrón normal" para detectar anomalías debe ser el de ESTA
+    // bodega, no un promedio global mezclado entre las ~48 bodegas del
+    // catálogo (una tiene normalmente 9 cajas, otra 90 — promediarlas no
+    // sirve para juzgar ninguna de las dos). Si esta bodega no tiene
+    // historial propio de este artículo todavía, evaluarConteo cae solo
+    // al promedio global (`articulo.stockHistoricoAvg`).
+    const promedioHistoricoBodega =
+      await this.inventarioRepository.promedioHistoricoPorAlmacen(
+        articulo.id,
+        almacenId,
+        inventarioId,
+      );
+
+    // `unidadDictada: articulo.unidadEstd` porque `itemInventario.conteoFisico`
+    // ya viene convertido y acumulado — evita que evaluarConteo lo convierta
+    // una segunda vez (su Regla 3 solo actúa si unidadDictada !== unidadEstd).
+    const evaluacion = this.anomaliasService.evaluarConteo({
+      articulo,
+      teorico: itemInventario.teorico,
+      conteoFisico: itemInventario.conteoFisico,
+      unidadDictada: articulo.unidadEstd,
+      promedioHistoricoBodega,
+    });
+
+    await this.inventarioRepository.actualizarEsAnomalia(
+      itemInventario.id,
+      evaluacion.esAnomalia,
+    );
+
+    if (evaluacion.alertas.length > 0) {
+      await this.inventarioRepository.crearAlertas(
+        evaluacion.alertas.map((alerta) => ({
+          inventarioId,
+          itemInventarioId: itemInventario.id,
+          tipo: alerta.tipo,
+          mensaje: alerta.mensaje,
+        })),
+      );
+    }
+
+    return {
+      articuloBusqueda: params.articuloBusqueda,
+      articulo,
+      cantidadDictada,
+      unidadDictada,
+      teorico: itemInventario.teorico,
+      conteoFisico: evaluacion.conteoFisico,
+      unidadUsada: evaluacion.unidadUsada,
+      esAnomalia: evaluacion.esAnomalia,
+      alertas: evaluacion.alertas.map((a) => a.mensaje),
+      scoreMatch: params.scoreMatch,
     };
   }
 }

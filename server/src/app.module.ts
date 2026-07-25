@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { ConfigModule } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { validateEnv } from './config/env.validation';
 import { PrismaModule } from './prisma/prisma.module';
 import { AlmacenesModule } from './modules/almacenes/almacenes.module';
 import { ArticulosModule } from './modules/articulos/articulos.module';
@@ -15,6 +17,15 @@ import { RolesGuard } from './modules/auth/guards/roles.guard';
 
 @Module({
   imports: [
+    // Global: ConfigService queda disponible en cualquier módulo sin tener
+    // que reimportar ConfigModule en cada uno. `validate` corre una sola vez
+    // acá, al arrancar — si falta algo requerido o tiene el tipo equivocado,
+    // la app ni siquiera termina de bootstrapear (ver env.validation.ts).
+    ConfigModule.forRoot({
+      isGlobal: true,
+      ignoreEnvFile: true,
+      validate: validateEnv,
+    }),
     // Límite global por defecto (por IP): generoso para no estorbar el uso
     // normal de la app (dictado + polling), pero cierra el abuso anónimo de
     // fuerza bruta. Rutas individuales pueden sobreescribirlo con @Throttle().

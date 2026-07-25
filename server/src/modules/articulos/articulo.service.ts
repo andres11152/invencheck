@@ -42,6 +42,11 @@ export class ArticuloService {
     return articulo;
   }
 
+  /** Lookup exacto por SKU (código de barras escaneado) — sin matching difuso. */
+  findBySku(sku: string): Promise<Articulo | null> {
+    return this.articuloRepository.findBySku(sku);
+  }
+
   /**
    * Mapea un texto dictado ("tres kilos de aji casero") al Articulo del
    * catálogo con mayor score de coincidencia difusa (nombre o aliases).

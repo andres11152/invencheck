@@ -1,4 +1,5 @@
 import { UnauthorizedException } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './jwt.strategy';
 import type { AuthService } from './auth.service';
 import type {
@@ -6,21 +7,9 @@ import type {
   JwtPayload,
 } from './interfaces/jwt-payload.interface';
 import { RolUsuario } from '../../generated/prisma/client';
+import type { EnvironmentVariables } from '../../config/env.validation';
 
 describe('JwtStrategy', () => {
-  const ORIGINAL_SECRET = process.env.JWT_SECRET;
-
-  beforeEach(() => {
-    // El constructor de JwtStrategy lee JWT_SECRET directamente de
-    // process.env y lanza si falta — solo importa al instanciar, no al
-    // importar el módulo (el mixin de PassportStrategy no lo toca).
-    process.env.JWT_SECRET = 'test-secret-solo-para-esta-suite';
-  });
-
-  afterEach(() => {
-    process.env.JWT_SECRET = ORIGINAL_SECRET;
-  });
-
   const usuario: AuthenticatedUser = {
     id: 'u1',
     email: 'op@demo.com',
@@ -35,7 +24,10 @@ describe('JwtStrategy', () => {
 
   function buildStrategy(validateUserById: jest.Mock) {
     const authService = { validateUserById } as unknown as AuthService;
-    return new JwtStrategy(authService);
+    const configService = {
+      get: jest.fn().mockReturnValue('test-secret-solo-para-esta-suite'),
+    } as unknown as ConfigService<EnvironmentVariables, true>;
+    return new JwtStrategy(authService, configService);
   }
 
   it('revalida contra la BD y devuelve el usuario autenticado si sigue activo', async () => {
@@ -52,11 +44,5 @@ describe('JwtStrategy', () => {
     await expect(strategy.validate(payload)).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
-  });
-
-  it('lanza al construirse si JWT_SECRET no está configurado', () => {
-    delete process.env.JWT_SECRET;
-
-    expect(() => buildStrategy(jest.fn())).toThrow(/JWT_SECRET/);
   });
 });

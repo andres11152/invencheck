@@ -1,8 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { UnidadMedida } from '../../generated/prisma/client';
 import { DictadoVozItem, parseVoiceItemsLocally } from './voice-parser.util';
+import type { EnvironmentVariables } from '../../config/env.validation';
 
-export type FuenteDictado = 'GEMINI' | 'REGLAS_LOCALES';
+export type FuenteDictado = 'GEMINI' | 'REGLAS_LOCALES' | 'ESCANER_SKU';
 
 export interface ProcesarDictadoVozResult {
   items: DictadoVozItem[];
@@ -41,22 +43,26 @@ const GEMINI_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 @Injectable()
 export class AiEngineService {
   private readonly logger = new Logger(AiEngineService.name);
-  private readonly geminiApiKey = process.env.GEMINI_API_KEY;
-  private readonly geminiModel = process.env.GEMINI_MODEL ?? 'gemini-3.6-flash';
-  private readonly systemPrompt =
-    process.env.GEMINI_SYSTEM_PROMPT ?? DEFAULT_SYSTEM_PROMPT;
-
+  private readonly geminiApiKey?: string;
+  private readonly geminiModel: string;
+  private readonly systemPrompt: string;
   /** Número máximo de reintentos antes de caer al parser local. */
-  private readonly maxRetries = (() => {
-    const parsed = parseInt(process.env.GEMINI_MAX_RETRIES ?? '3', 10);
-    return Number.isNaN(parsed) || parsed < 0 ? 3 : parsed;
-  })();
-
+  private readonly maxRetries: number;
   /** Delay base en ms para el primer reintento (se duplica con cada intento). */
-  private readonly baseDelayMs = (() => {
-    const parsed = parseInt(process.env.GEMINI_BASE_DELAY_MS ?? '500', 10);
-    return Number.isNaN(parsed) || parsed < 100 ? 500 : parsed;
-  })();
+  private readonly baseDelayMs: number;
+
+  constructor(configService: ConfigService<EnvironmentVariables, true>) {
+    this.geminiApiKey = configService.get('GEMINI_API_KEY', { infer: true });
+    this.geminiModel =
+      configService.get('GEMINI_MODEL', { infer: true }) ?? 'gemini-3.6-flash';
+    this.systemPrompt =
+      configService.get('GEMINI_SYSTEM_PROMPT', { infer: true }) ??
+      DEFAULT_SYSTEM_PROMPT;
+    this.maxRetries =
+      configService.get('GEMINI_MAX_RETRIES', { infer: true }) ?? 3;
+    this.baseDelayMs =
+      configService.get('GEMINI_BASE_DELAY_MS', { infer: true }) ?? 500;
+  }
 
   async procesarDictadoVoz(
     transcripcionTexto: string,
