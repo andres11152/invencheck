@@ -1,5 +1,19 @@
 import type { EstadoInventario, TipoAlerta, UnidadMedida } from "@invencheck/shared";
 
+export type RolUsuario = "OPERARIO" | "AUDITOR" | "ADMIN";
+
+export interface AuthenticatedUsuario {
+  id: string;
+  email: string;
+  nombre: string;
+  rol: RolUsuario;
+}
+
+export interface LoginResult {
+  accessToken: string;
+  usuario: AuthenticatedUsuario;
+}
+
 export interface Almacen {
   id: string;
   codigo: string;
@@ -116,48 +130,9 @@ export interface ItemNoMatcheado {
 
 export interface ProcesarTomaPorVozResult {
   inventario: InventarioDetalle;
-  fuenteIA: "OPENAI" | "GEMINI" | "REGLAS_LOCALES";
+  fuenteIA: "GEMINI" | "REGLAS_LOCALES";
   itemsMatcheados: ItemProcesadoResumen[];
   itemsNoMatcheados: ItemNoMatcheado[];
-}
-
-export interface Receta {
-  id: string;
-  nombre: string;
-  porciones: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RecetaItem {
-  id: string;
-  recetaId: string;
-  articuloId: string;
-  cantidadPorPorcion: number;
-  unidad: UnidadMedida;
-  articulo: Articulo;
-}
-
-export interface RecetaDetalle extends Receta {
-  items: RecetaItem[];
-}
-
-export type FuenteDisponible = "TOMA_FISICA" | "PROMEDIO_HISTORICO" | "SIN_DATO";
-
-export interface InsumoExplosion {
-  articulo: Articulo;
-  unidad: UnidadMedida;
-  necesario: number;
-  disponible: number;
-  faltante: number;
-  fuenteDisponible: FuenteDisponible;
-}
-
-export interface ExplosionInsumosResult {
-  receta: { id: string; nombre: string; porcionesBase: number };
-  porcionesSolicitadas: number;
-  almacenId: string | null;
-  insumos: InsumoExplosion[];
 }
 
 export interface VariacionArticulo {

@@ -1,5 +1,9 @@
 "use client";
 
+// Ver nota en app/page.tsx: necesario para que "Collect page data" de
+// `next build` no falle con `TypeError: n.createContext is not a function`.
+export const dynamic = "force-dynamic";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -13,17 +17,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { ClientProviders } from "@/components/client-providers";
 
-export default function ReportesPage() {
+const TODAS_LAS_BODEGAS = "__todas__";
+
+function ReportesPageContent() {
   const [almacenes, setAlmacenes] = useState<Almacen[]>([]);
   const [almacenId, setAlmacenId] = useState("");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
 
-  const [filas, setFilas] = useState<VariacionArticulo[]>([]);
+  const [filasVariacion, setFilasVariacion] = useState<VariacionArticulo[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,12 +45,12 @@ export default function ReportesPage() {
     setCargando(true);
     setError(null);
     try {
-      const data = await api.getReporteVariacion({
+      const params = {
         almacenId: almacenId || undefined,
         desde: desde || undefined,
         hasta: hasta || undefined,
-      });
-      setFilas(data);
+      };
+      setFilasVariacion(await api.getReporteVariacion(params));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo cargar el reporte");
     } finally {
@@ -53,14 +63,25 @@ export default function ReportesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function exportar() {
-    if (filas.length === 0) return;
+  function exportarVariacion() {
+    if (filasVariacion.length === 0) return;
     descargarArchivo(
-      reporteVariacionToCsv(filas),
+      reporteVariacionToCsv(filasVariacion),
       `reporte-variacion-${new Date().toISOString().slice(0, 10)}.csv`,
       "text/csv;charset=utf-8",
     );
     toast.success("CSV exportado");
+  }
+
+  function exportarOracleMyInventory() {
+    const params = new URLSearchParams();
+    if (almacenId && almacenId !== TODAS_LAS_BODEGAS) params.set("almacenId", almacenId);
+    if (desde) params.set("desde", desde);
+    if (hasta) params.set("hasta", hasta);
+    const qs = params.toString();
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api";
+    window.open(`${apiUrl}/reportes/export-oracle-myinventory${qs ? `?${qs}` : ""}`, "_blank");
+    toast.success("Exportando CSV para Oracle MyInventory");
   }
 
   return (
@@ -74,14 +95,13 @@ export default function ReportesPage() {
           Bodegas
         </Link>
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <BarChart3 className="h-6 w-6" />
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md transition-transform duration-300 hover:scale-105">
+            <BarChart3 className="h-5.5 w-5.5" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold sm:text-2xl">Variación por artículo</h1>
+            <h1 className="text-xl font-semibold sm:text-2xl">Reportes</h1>
             <p className="text-sm text-muted-foreground">
-              Teórico vs. contado acumulado en todas las tomas físicas — qué artículos dan
-              problemas con más frecuencia
+              Teórico vs. contado acumulado en todas las tomas físicas — qué artículos dan problemas con más frecuencia
             </p>
           </div>
         </div>
@@ -91,19 +111,24 @@ export default function ReportesPage() {
         <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-end">
           <div className="flex-1 space-y-1.5">
             <Label htmlFor="almacen">Bodega</Label>
-            <select
-              id="almacen"
-              value={almacenId}
-              onChange={(e) => setAlmacenId(e.target.value)}
-              className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-base shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:text-sm"
+            {/* Radix Select no permite value="" en un Item (lo reserva para "sin selección"),
+                así que "todas las bodegas" usa un sentinel y se traduce de vuelta a "" acá. */}
+            <Select
+              value={almacenId || TODAS_LAS_BODEGAS}
+              onValueChange={(v) => setAlmacenId(v === TODAS_LAS_BODEGAS ? "" : v)}
             >
-              <option value="">Todas las bodegas</option>
-              {almacenes.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.nombre}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id="almacen">
+                <SelectValue placeholder="Todas las bodegas" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={TODAS_LAS_BODEGAS}>Todas las bodegas</SelectItem>
+                {almacenes.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.nombre}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex-1 space-y-1.5">
             <Label htmlFor="desde">Desde</Label>
@@ -133,82 +158,94 @@ export default function ReportesPage() {
         </div>
       )}
 
-      {!cargando && !error && filas.length === 0 && (
-        <Card>
-          <CardContent className="p-6 text-center text-sm text-muted-foreground">
-            No hay tomas físicas registradas para este filtro todavía.
-          </CardContent>
-        </Card>
+      {!cargando && !error && filasVariacion.length === 0 && (
+        <EmptyState
+          icon={BarChart3}
+          title="Sin datos registrados"
+          description="Todavía no hay tomas físicas para este filtro."
+        />
       )}
 
-      {!cargando && filas.length > 0 && (
+      {!cargando && filasVariacion.length > 0 && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>{filas.length} artículo(s)</CardTitle>
-            <Button size="sm" variant="outline" onClick={exportar}>
-              <Download className="h-4 w-4" />
-              Exportar CSV
-            </Button>
+            <CardTitle>{filasVariacion.length} artículo(s)</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="outline" onClick={exportarOracleMyInventory} className="border-primary/40 text-primary hover:bg-primary/10">
+                <Download className="h-4 w-4" />
+                Oracle MyInventory (CSV)
+              </Button>
+              <Button size="sm" variant="outline" onClick={exportarVariacion}>
+                <Download className="h-4 w-4" />
+                Exportar CSV
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px] text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
-                    <th className="py-2 pr-2">Artículo</th>
-                    <th className="py-2 pr-2">Tomas</th>
-                    <th className="py-2 pr-2">Anomalías</th>
-                    <th className="py-2 pr-2">Teórico</th>
-                    <th className="py-2 pr-2">Contado</th>
-                    <th className="py-2 pr-2">Merma</th>
-                    <th className="py-2 pr-2">Última toma</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filas.map((fila) => (
-                    <tr key={fila.articuloId} className="border-b border-border/50">
-                      <td className="py-2 pr-2">
-                        <p className="font-medium">{fila.nombre}</p>
-                        <p className="text-xs text-muted-foreground">{fila.categoria}</p>
-                      </td>
-                      <td className="py-2 pr-2">{fila.tomas}</td>
-                      <td className="py-2 pr-2">
-                        {fila.anomalias > 0 ? (
-                          <Badge variant="destructive">{fila.anomalias}</Badge>
-                        ) : (
-                          <span className="text-muted-foreground">0</span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-2 whitespace-nowrap">
-                        {formatCantidad(fila.promedioTeorico, fila.unidadEstd)}
-                      </td>
-                      <td className="py-2 pr-2 whitespace-nowrap">
-                        {formatCantidad(fila.promedioContado, fila.unidadEstd)}
-                      </td>
-                      <td
-                        className={cn(
-                          "py-2 pr-2 whitespace-nowrap font-medium",
-                          fila.mermaTotal < 0
-                            ? "text-destructive"
-                            : fila.mermaTotal > 0
-                              ? "text-success"
-                              : "text-muted-foreground",
-                        )}
-                      >
-                        {fila.mermaTotal > 0 ? "+" : ""}
-                        {formatNumero(fila.mermaTotal)}
-                      </td>
-                      <td className="py-2 pr-2 whitespace-nowrap text-muted-foreground">
-                        {formatFecha(fila.ultimaFecha)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <Table className="min-w-[640px]">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Artículo</TableHead>
+                  <TableHead>Tomas</TableHead>
+                  <TableHead>Anomalías</TableHead>
+                  <TableHead>Teórico</TableHead>
+                  <TableHead>Contado</TableHead>
+                  <TableHead>Merma</TableHead>
+                  <TableHead>Última toma</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filasVariacion.map((fila) => (
+                  <TableRow key={fila.articuloId}>
+                    <TableCell>
+                      <p className="font-medium">{fila.nombre}</p>
+                      <p className="text-xs text-muted-foreground">{fila.categoria}</p>
+                    </TableCell>
+                    <TableCell>{fila.tomas}</TableCell>
+                    <TableCell>
+                      {fila.anomalias > 0 ? (
+                        <Badge variant="destructive">{fila.anomalias}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground">0</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {formatCantidad(fila.promedioTeorico, fila.unidadEstd)}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {formatCantidad(fila.promedioContado, fila.unidadEstd)}
+                    </TableCell>
+                    <TableCell
+                      className={cn(
+                        "whitespace-nowrap font-medium",
+                        fila.mermaTotal < 0
+                          ? "text-destructive"
+                          : fila.mermaTotal > 0
+                            ? "text-success"
+                            : "text-muted-foreground",
+                      )}
+                    >
+                      {fila.mermaTotal > 0 ? "+" : ""}
+                      {formatNumero(fila.mermaTotal)}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-muted-foreground">
+                      {formatFecha(fila.ultimaFecha)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       )}
     </main>
+  );
+}
+
+export default function ReportesPage() {
+  return (
+    <ClientProviders>
+      <ReportesPageContent />
+    </ClientProviders>
   );
 }

@@ -11,9 +11,13 @@ import {
   InventarioDetalle,
   InventarioRepository,
 } from './inventario.repository';
-import { round2 } from '../../common/utils/unit-conversion.util';
+import {
+  factorConversion,
+  round2,
+} from '../../common/utils/unit-conversion.util';
 import {
   EstadoInventario,
+  TipoAlerta,
   type Articulo,
   type Inventario,
   type UnidadMedida,
@@ -288,30 +292,90 @@ export class InventarioService {
       }
 
       const articulo = match.articulo;
-      const itemExistente = await this.inventarioRepository.findItem(
-        inventarioId,
-        articulo.id,
-      );
-      // Sin integración ERP en vivo: la primera captura usa el promedio
-      // histórico del artículo como proxy de teórico; recontar preserva
-      // el teórico ya registrado (p. ej. si vino de un sync de ERP real).
-      const teorico = itemExistente?.teorico ?? articulo.stockHistoricoAvg ?? 0;
 
-      const evaluacion = this.anomaliasService.evaluarConteo({
-        articulo,
-        teorico,
-        conteoFisico: item.cantidad,
-        unidadDictada: item.unidadDictada,
-      });
+      // El ítem puede ya haber sido contado antes en esta misma toma (ej. en
+      // otro estante) — la nueva cantidad dictada se ACUMULA a la previa en
+      // vez de sobreescribirse. La unidad se convierte ANTES de sumar (nunca
+      // se mezclan kg + gramos como números crudos) y la suma en sí se hace
+      // con un `increment` atómico en Postgres, no leyendo-sumando-escribiendo
+      // en código de aplicación: así dos dictados casi simultáneos del mismo
+      // artículo no se pisan entre sí (lost update).
+      const factor =
+        item.unidadDictada === articulo.unidadEstd
+          ? 1
+          : factorConversion(item.unidadDictada, articulo.unidadEstd);
 
-      const itemInventario = await this.inventarioRepository.upsertItem({
+      if (factor === undefined) {
+        const mensaje = `Se dictó en ${item.unidadDictada} pero "${articulo.nombre}" se maneja en ${articulo.unidadEstd}; no hay conversión automática disponible.`;
+        const itemInventario =
+          await this.inventarioRepository.marcarUnidadAmbigua({
+            inventarioId,
+            articuloId: articulo.id,
+            teoricoInicial: articulo.stockHistoricoAvg ?? 0,
+            cantidadDictada: item.cantidad,
+            unidadDictada: item.unidadDictada,
+          });
+        await this.inventarioRepository.crearAlertas([
+          {
+            inventarioId,
+            itemInventarioId: itemInventario.id,
+            tipo: TipoAlerta.UNIDAD_AMBIGUA,
+            mensaje,
+          },
+        ]);
+
+        itemsMatcheados.push({
+          articuloBusqueda: item.articuloBusqueda,
+          articulo,
+          cantidadDictada: item.cantidad,
+          unidadDictada: item.unidadDictada,
+          teorico: itemInventario.teorico,
+          conteoFisico: itemInventario.conteoFisico,
+          unidadUsada: itemInventario.unidadUsada,
+          esAnomalia: true,
+          alertas: [mensaje],
+          scoreMatch: match.score,
+        });
+        continue;
+      }
+
+      const delta = round2(item.cantidad * factor);
+      const itemInventario = await this.inventarioRepository.incrementarConteo({
         inventarioId,
         articuloId: articulo.id,
-        teorico,
-        conteoFisico: evaluacion.conteoFisico,
-        unidadUsada: evaluacion.unidadUsada,
-        esAnomalia: evaluacion.esAnomalia,
+        delta,
+        unidadUsada: articulo.unidadEstd,
+        teoricoInicial: articulo.stockHistoricoAvg ?? 0,
       });
+
+      // El "patrón normal" para detectar anomalías debe ser el de ESTA
+      // bodega, no un promedio global mezclado entre las ~48 bodegas del
+      // catálogo (una tiene normalmente 9 cajas, otra 90 — promediarlas no
+      // sirve para juzgar ninguna de las dos). Si esta bodega no tiene
+      // historial propio de este artículo todavía, evaluarConteo cae solo
+      // al promedio global (`articulo.stockHistoricoAvg`).
+      const promedioHistoricoBodega =
+        await this.inventarioRepository.promedioHistoricoPorAlmacen(
+          articulo.id,
+          inventario.almacenId,
+          inventarioId,
+        );
+
+      // `unidadDictada: articulo.unidadEstd` porque `itemInventario.conteoFisico`
+      // ya viene convertido y acumulado — evita que evaluarConteo lo convierta
+      // una segunda vez (su Regla 3 solo actúa si unidadDictada !== unidadEstd).
+      const evaluacion = this.anomaliasService.evaluarConteo({
+        articulo,
+        teorico: itemInventario.teorico,
+        conteoFisico: itemInventario.conteoFisico,
+        unidadDictada: articulo.unidadEstd,
+        promedioHistoricoBodega,
+      });
+
+      await this.inventarioRepository.actualizarEsAnomalia(
+        itemInventario.id,
+        evaluacion.esAnomalia,
+      );
 
       if (evaluacion.alertas.length > 0) {
         await this.inventarioRepository.crearAlertas(
@@ -329,7 +393,7 @@ export class InventarioService {
         articulo,
         cantidadDictada: item.cantidad,
         unidadDictada: item.unidadDictada,
-        teorico,
+        teorico: itemInventario.teorico,
         conteoFisico: evaluacion.conteoFisico,
         unidadUsada: evaluacion.unidadUsada,
         esAnomalia: evaluacion.esAnomalia,

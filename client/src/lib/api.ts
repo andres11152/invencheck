@@ -3,14 +3,13 @@ import type {
   Almacen,
   AlertaInventario,
   ComparacionAuditoriaResult,
-  ExplosionInsumosResult,
   Inventario,
   InventarioDetalle,
+  LoginResult,
   ProcesarTomaPorVozResult,
-  Receta,
-  RecetaDetalle,
   VariacionArticulo,
 } from "./types";
+import { clearSession, getToken } from "./auth-storage";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api";
 
@@ -25,11 +24,16 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
   let response: Response;
   try {
     response = await fetch(`${API_URL}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...init?.headers },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
     });
   } catch {
     throw new ApiError(
@@ -39,6 +43,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
+    // Sesión inválida/expirada en una ruta protegida (no el intento de login
+    // en sí, que también responde 401 con credenciales incorrectas y debe
+    // manejarlo el propio formulario, no una redirección global).
+    if (response.status === 401 && token && path !== "/auth/login") {
+      clearSession();
+      if (typeof window !== "undefined") window.location.href = "/login";
+    }
+
     const body = (await response.json().catch(() => null)) as { message?: string } | null;
     const message = Array.isArray(body?.message)
       ? body.message.join(", ")
@@ -51,10 +63,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  login: (email: string, password: string) =>
+    request<LoginResult>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+
   getAlmacenes: (unidad?: string) =>
     request<Almacen[]>(`/almacenes${unidad ? `?unidad=${encodeURIComponent(unidad)}` : ""}`),
 
-  crearInventario: (data: { almacenId: string; usuarioId: string }) =>
+  crearInventario: (data: { almacenId: string }) =>
     request<Inventario>("/inventarios", {
       method: "POST",
       body: JSON.stringify(data),
@@ -79,24 +97,13 @@ export const api = {
       method: "PATCH",
     }),
 
-  crearAuditoriaCiega: (id: string, auditorId: string) =>
+  crearAuditoriaCiega: (id: string) =>
     request<Inventario>(`/inventarios/${id}/auditoria-ciega`, {
       method: "POST",
-      body: JSON.stringify({ auditorId }),
     }),
 
   getComparacionAuditoria: (id: string) =>
     request<ComparacionAuditoriaResult>(`/inventarios/${id}/comparacion-auditoria`),
-
-  getRecetas: () => request<Receta[]>("/recetas"),
-
-  getReceta: (id: string) => request<RecetaDetalle>(`/recetas/${id}`),
-
-  explosionInsumos: (id: string, porciones: number, almacenId?: string) =>
-    request<ExplosionInsumosResult>(`/recetas/${id}/explosion`, {
-      method: "POST",
-      body: JSON.stringify({ porciones, almacenId }),
-    }),
 
   getReporteVariacion: (params: { almacenId?: string; desde?: string; hasta?: string }) => {
     const query = new URLSearchParams();

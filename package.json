@@ -2,6 +2,10 @@
   "name": "invencheck-monorepo",
   "version": "1.0.0",
   "private": true,
+  "overrides": {
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
   "description": "Monorepo para la PWA de Gestión de Inventarios y Toma Física por Voz de Colsubsidio",
   "workspaces": [
     "shared",

@@ -4,6 +4,7 @@ import type { EstadoInventario } from "@invencheck/shared";
 import { Badge } from "@/components/ui/badge";
 import { formatFecha } from "@/lib/format";
 import type { InventarioDetalle } from "@/lib/types";
+import { ColsubsidioLogo } from "@/components/colsubsidio-logo";
 
 const ESTADO_TONO: Record<EstadoInventario, "secondary" | "warning" | "success" | "default"> = {
   BORRADOR: "secondary",
@@ -24,34 +25,46 @@ export function InventarioHeader({ inventario }: { inventario: InventarioDetalle
 
   return (
     <header className="space-y-3">
+      {/* Breadcrumb con color de marca en hover */}
       <Link
         href="/"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-secondary"
       >
         <ArrowLeft className="h-4 w-4" />
         Bodegas
       </Link>
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold sm:text-2xl">{inventario.almacen.nombre}</h1>
-          <p className="text-sm text-muted-foreground">
-            Fecha de corte: {formatFecha(inventario.fechaCorte)}
-          </p>
+        <div className="flex items-center gap-3">
+          {/* Ícono K Colsubsidio sobre fondo azul primario */}
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary p-1.5 shadow-md">
+            <ColsubsidioLogo variant="color" size="sm" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">
+              {inventario.almacen.nombre}
+            </h1>
+            <p className="font-mono text-xs text-muted-foreground">
+              Fecha de corte: {formatFecha(inventario.fechaCorte)}
+            </p>
+          </div>
         </div>
         <Badge variant={ESTADO_TONO[inventario.estado]} className="text-sm">
           {ESTADO_LABEL[inventario.estado]}
         </Badge>
       </div>
 
+      {/* Estadísticas con acento de marca en el valor */}
       <div className="grid grid-cols-2 gap-3 sm:max-w-sm">
-        <div className="rounded-lg border border-border bg-card p-3">
+        <div className="rounded-xl border border-border/70 bg-card/65 p-3 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
           <p className="text-xs text-muted-foreground">Ítems contados</p>
-          <p className="text-2xl font-bold">{inventario.items.length}</p>
+          <p className="font-mono text-2xl font-bold text-foreground">
+            {inventario.items.length}
+          </p>
         </div>
-        <div className="rounded-lg border border-border bg-card p-3">
+        <div className="rounded-xl border border-border/70 bg-card/65 p-3 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md">
           <p className="text-xs text-muted-foreground">Alertas activas</p>
-          <p className="text-2xl font-bold text-destructive">
+          <p className="font-mono text-2xl font-bold text-destructive">
             {inventario.alertas.length}
             {totalAnomalias > 0 && (
               <span className="ml-1 text-sm font-normal text-muted-foreground">

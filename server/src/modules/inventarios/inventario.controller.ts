@@ -4,6 +4,8 @@ import { CrearInventarioDto } from './dto/crear-inventario.dto';
 import { ProcesarVozDto } from './dto/procesar-voz.dto';
 import { CambiarEstadoDto } from './dto/cambiar-estado.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { RolUsuario } from '../../generated/prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/jwt-payload.interface';
 
 @Controller('inventarios')
@@ -32,6 +34,10 @@ export class InventarioController {
     return this.inventarioService.procesarTomaPorVoz(id, dto.texto);
   }
 
+  // Consolidar/enviar a ERP es una acción de cierre supervisado: quien contó
+  // (OPERARIO) no se autoaprueba — segregación de funciones clásica en
+  // procesos de inventario/auditoría.
+  @Roles(RolUsuario.AUDITOR, RolUsuario.ADMIN)
   @Patch(':id/estado')
   cambiarEstado(@Param('id') id: string, @Body() dto: CambiarEstadoDto) {
     return this.inventarioService.cambiarEstado(id, dto.estado);
@@ -42,6 +48,7 @@ export class InventarioController {
     return this.inventarioService.resolverAlerta(id, alertaId);
   }
 
+  @Roles(RolUsuario.AUDITOR, RolUsuario.ADMIN)
   @Post(':id/auditoria-ciega')
   crearAuditoriaCiega(
     @Param('id') id: string,

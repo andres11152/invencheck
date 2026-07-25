@@ -1,15 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Download, FileJson, Loader2 } from "lucide-react";
+import { CheckCircle2, Download, FileJson, Loader2, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { EstadoInventario } from "@invencheck/shared";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, ApiError } from "@/lib/api";
-import { descargarArchivo, inventarioToCsv, inventarioToErpJson } from "@/lib/export-erp";
+import { descargarArchivo, inventarioToCsv, inventarioToErpJson, oracleMyInventoryToCsv } from "@/lib/export-erp";
 import type { InventarioDetalle } from "@/lib/types";
+import { useAuth } from "@/components/auth-provider";
 
 export function AccionesCierre({
   inventario,
@@ -18,6 +19,7 @@ export function AccionesCierre({
   inventario: InventarioDetalle;
   onEstadoActualizado: (estado: InventarioDetalle["estado"]) => void;
 }) {
+  const { usuario } = useAuth();
   const [consolidando, setConsolidando] = useState(false);
   const [enviando, setEnviando] = useState(false);
 
@@ -26,6 +28,10 @@ export function AccionesCierre({
     inventario.estado === EstadoInventario.ENVIADO_ERP;
   const enviadoAERP = inventario.estado === EstadoInventario.ENVIADO_ERP;
   const alertasActivas = inventario.alertas.length;
+  // Consolidar/enviar a ERP está restringido a AUDITOR/ADMIN en el servidor
+  // (RolesGuard) — quien contó no se autoaprueba. Se oculta acá solo para
+  // evitar un 403 confuso, no es la protección real.
+  const puedeCerrar = usuario?.rol === "AUDITOR" || usuario?.rol === "ADMIN";
 
   async function consolidar() {
     setConsolidando(true);
@@ -59,6 +65,12 @@ export function AccionesCierre({
     toast.success("CSV exportado");
   }
 
+  function exportarOracleCsv() {
+    const nombreArchivo = `oracle-myinventory-${inventario.almacen.codigo}-${inventario.id.slice(0, 8)}.csv`;
+    descargarArchivo(oracleMyInventoryToCsv(inventario), nombreArchivo, "text/csv;charset=utf-8");
+    toast.success("CSV Oracle MyInventory exportado");
+  }
+
   function exportarJson() {
     const nombreArchivo = `inventario-${inventario.almacen.codigo}-${inventario.id.slice(0, 8)}.json`;
     descargarArchivo(
@@ -69,8 +81,12 @@ export function AccionesCierre({
     toast.success("JSON exportado");
   }
 
+  function imprimirActa() {
+    window.print();
+  }
+
   return (
-    <Card>
+    <Card className="no-print">
       <CardHeader>
         <CardTitle>Cierre de inventario</CardTitle>
       </CardHeader>
@@ -86,8 +102,13 @@ export function AccionesCierre({
             Este inventario ya fue consolidado y transferido exitosamente al ERP (Oracle/Symphony).
           </p>
         )}
+        {!puedeCerrar && !yaConciliado && (
+          <p className="rounded-md border border-border bg-muted/40 p-2.5 text-xs text-muted-foreground">
+            Solo un auditor o administrador puede consolidar y enviar este inventario al ERP.
+          </p>
+        )}
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {!enviadoAERP && (
+          {!enviadoAERP && puedeCerrar && (
             <Button
               variant={inventario.estado === EstadoInventario.CONCILIADO ? "outline" : "success"}
               disabled={consolidando || yaConciliado || inventario.items.length === 0 || alertasActivas > 0}
@@ -101,7 +122,7 @@ export function AccionesCierre({
               {yaConciliado ? "Consolidado" : "Consolidar y Finalizar"}
             </Button>
           )}
-          {inventario.estado === EstadoInventario.CONCILIADO && (
+          {inventario.estado === EstadoInventario.CONCILIADO && puedeCerrar && (
             <Button variant="default" disabled={enviando} onClick={enviarAERP}>
               {enviando ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -114,10 +135,27 @@ export function AccionesCierre({
           <Button
             variant="outline"
             disabled={inventario.items.length === 0}
+            onClick={imprimirActa}
+          >
+            <Printer className="h-4 w-4 text-secondary" />
+            Imprimir Acta (PDF)
+          </Button>
+          <Button
+            variant="outline"
+            disabled={inventario.items.length === 0}
+            onClick={exportarOracleCsv}
+            className="border-primary/40 hover:bg-primary/10"
+          >
+            <Download className="h-4 w-4 text-primary" />
+            Oracle MyInventory (CSV)
+          </Button>
+          <Button
+            variant="outline"
+            disabled={inventario.items.length === 0}
             onClick={exportarCsv}
           >
             <Download className="h-4 w-4" />
-            Exportar CSV (ERP/Symphony)
+            Exportar CSV Genérico
           </Button>
           <Button
             variant="outline"

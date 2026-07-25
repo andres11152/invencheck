@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # Instala las 3 workspaces (shared/client/server) de una sola vez y
+      # dispara `postinstall: prisma generate` en server, del que dependen
+      # el typecheck y el build.
+      - run: npm ci
+
+      - name: shared — build
+        run: npm run build -w shared
+
+      - name: server — lint
+        run: npm run lint -w server
+      - name: server — typecheck
+        run: npx tsc --noEmit -p server
+      - name: server — unit tests
+        run: npm test -w server
+      - name: server — build
+        run: npm run build -w server
+
+      - name: client — lint
+        run: npm run lint -w client
+      - name: client — typecheck
+        run: npx tsc --noEmit -p client
+      - name: client — build
+        run: npm run build -w client

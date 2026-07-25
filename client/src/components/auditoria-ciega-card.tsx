@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ClipboardCheck, Copy, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
 
 import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/components/auth-provider";
 import type { ComparacionAuditoriaResult, InventarioDetalle } from "@/lib/types";
 import { formatCantidad } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,7 +26,7 @@ export function AuditoriaCiegaCard({
    * dos escrituras concurrentes sobre `inventario` se pisen entre sí). */
   deshabilitado?: boolean;
 }) {
-  const [auditorId, setAuditorId] = useState("");
+  const { usuario } = useAuth();
   const [creando, setCreando] = useState(false);
   const [linkAuditoria, setLinkAuditoria] = useState<string | null>(null);
 
@@ -54,13 +55,9 @@ export function AuditoriaCiegaCard({
   }
 
   async function iniciarAuditoria() {
-    if (!auditorId.trim()) {
-      toast.error("Escribe el nombre o id del auditor");
-      return;
-    }
     setCreando(true);
     try {
-      const auditoria = await api.crearAuditoriaCiega(inventario.id, auditorId.trim());
+      const auditoria = await api.crearAuditoriaCiega(inventario.id);
       const url = `${window.location.origin}/inventario/${auditoria.id}`;
       setLinkAuditoria(url);
       toast.success("Auditoría ciega creada");
@@ -121,8 +118,12 @@ export function AuditoriaCiegaCard({
     );
   }
 
-  // Sin auditoría todavía: ofrecer crearla.
+  // Sin auditoría todavía: ofrecer crearla. Restringido a AUDITOR/ADMIN en
+  // el servidor (segregación de funciones: quien contó no se autoaudita) —
+  // el botón se oculta acá solo para evitar un 403 confuso, la restricción
+  // real vive en RolesGuard.
   if (!inventario.auditoriaCiega) {
+    const puedeAuditar = usuario?.rol === "AUDITOR" || usuario?.rol === "ADMIN";
     return (
       <Card>
         <CardHeader>
@@ -136,17 +137,16 @@ export function AuditoriaCiegaCard({
             Un segundo operario cuenta esta misma bodega de forma independiente, sin ver estos
             números, y al final se comparan.
           </p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input
-              value={auditorId}
-              onChange={(e) => setAuditorId(e.target.value)}
-              placeholder="Nombre o id del auditor"
-            />
+          {puedeAuditar ? (
             <Button onClick={iniciarAuditoria} disabled={creando || deshabilitado}>
               {creando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardCheck className="h-4 w-4" />}
-              Iniciar Auditoría Ciega
+              Iniciar Auditoría Ciega como {usuario?.nombre}
             </Button>
-          </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Solo un auditor o administrador puede iniciar la auditoría ciega de esta toma.
+            </p>
+          )}
         </CardContent>
       </Card>
     );
@@ -163,9 +163,7 @@ export function AuditoriaCiegaCard({
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-          <span className="text-muted-foreground">
-            Auditor: <span className="font-medium text-foreground">{inventario.auditoriaCiega.usuarioId}</span>
-          </span>
+          <span className="text-muted-foreground">Auditoría independiente en curso</span>
           <Badge variant="secondary">{inventario.auditoriaCiega.estado}</Badge>
         </div>
 

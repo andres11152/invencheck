@@ -36,6 +36,30 @@ export function inventarioToCsv(inventario: InventarioDetalle): string {
   return rowsToCsv(CSV_HEADERS, rows);
 }
 
+const ORACLE_MYINVENTORY_HEADERS = [
+  "CODIGO_ALMACEN",
+  "SKU",
+  "NOMBRE_ARTICULO",
+  "CONTEO_FISICO",
+  "UNIDAD",
+  "FECHA_CORTE",
+  "ESTADO",
+];
+
+export function oracleMyInventoryToCsv(inventario: InventarioDetalle): string {
+  const rows = inventario.items.map((item) => [
+    inventario.almacen.codigo,
+    item.articulo.sku ?? "",
+    item.articulo.nombre,
+    item.conteoFisico,
+    item.unidadUsada,
+    inventario.fechaCorte,
+    inventario.estado,
+  ]);
+
+  return rowsToCsv(ORACLE_MYINVENTORY_HEADERS, rows);
+}
+
 const VARIACION_CSV_HEADERS = [
   "sku",
   "articulo",

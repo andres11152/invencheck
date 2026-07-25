@@ -29,13 +29,15 @@ export class AlmacenRepository {
 
   /** Upsert por `codigo` (clave estable del catálogo de bodegas). */
   async upsertMany(rows: AlmacenUpsertInput[]): Promise<number> {
-    for (const row of rows) {
-      await this.prisma.almacen.upsert({
+    if (rows.length === 0) return 0;
+    const ops = rows.map((row) =>
+      this.prisma.almacen.upsert({
         where: { codigo: row.codigo },
         update: { nombre: row.nombre, unidad: row.unidad },
         create: row,
-      });
-    }
+      }),
+    );
+    await this.prisma.$transaction(ops);
     return rows.length;
   }
 }

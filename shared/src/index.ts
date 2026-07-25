@@ -4,7 +4,7 @@ export * from './dto';
 export interface Usuario {
   id: string;
   nombre: string;
-  rol: 'ADMIN' | 'OPERARIO';
+  rol: 'ADMIN' | 'OPERARIO' | 'AUDITOR';
 }
 
 export interface Producto {

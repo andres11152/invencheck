@@ -69,6 +69,31 @@ describe('parseVoiceItemsLocally', () => {
     ]);
   });
 
+  it('parsea correctamente fracciones habladas (medio kilo, dos kilos y medio, libras)', () => {
+    const itemsMedio = parseVoiceItemsLocally('medio kilo de papa criolla');
+    expect(itemsMedio[0]).toMatchObject({
+      articuloBusqueda: 'papa criolla',
+      cantidad: 0.5,
+      unidadDictada: UnidadMedida.KILOGRAMO,
+    });
+
+    const itemsCompuesto = parseVoiceItemsLocally(
+      'dos kilos y medio de cebolla',
+    );
+    expect(itemsCompuesto[0]).toMatchObject({
+      articuloBusqueda: 'cebolla',
+      cantidad: 2.5,
+      unidadDictada: UnidadMedida.KILOGRAMO,
+    });
+
+    const itemsLibras = parseVoiceItemsLocally('tres libras de carne');
+    expect(itemsLibras[0]).toMatchObject({
+      articuloBusqueda: 'carne',
+      cantidad: 1.5,
+      unidadDictada: UnidadMedida.KILOGRAMO,
+    });
+  });
+
   it('devuelve una lista vacía cuando no hay ningún número dictado', () => {
     expect(parseVoiceItemsLocally('papa criolla sin cantidad')).toEqual([]);
     expect(parseVoiceItemsLocally('')).toEqual([]);

@@ -7,7 +7,13 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
     <div
       ref={ref}
       className={cn(
-        "rounded-xl border border-border bg-card text-card-foreground shadow-sm",
+        /* Glass "económico" (sin backdrop-filter — se repite en grillas de
+         * decenas de tarjetas, el blur real queda para .glass en superficies
+         * únicas por pantalla). Usa utilidades reales de Tailwind (no una
+         * clase custom) para que un className del caller como
+         * "border-warning/40 bg-warning/10" siga pisando esto vía
+         * tailwind-merge, tal como ya dependen varios componentes existentes. */
+        "rounded-2xl border border-border/70 bg-card/65 text-card-foreground shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05),0_10px_30px_-14px_rgba(0,0,0,0.55)] transition-all duration-300",
         className,
       )}
       {...props}

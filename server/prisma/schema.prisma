@@ -83,24 +83,23 @@ model Almacen {
 /// de la data real de Colsubsidio no tienen código y se identifican
 /// solo por nombre; por eso se indexa pero no se marca único.
 model Articulo {
-  id                String   @id @default(cuid())
+  id                String       @id @default(cuid())
   /// Único cuando presente; Postgres permite múltiples NULL en una columna @unique,
   /// lo que preserva el caso real de artículos sin código.
-  sku               String?  @unique
+  sku               String?      @unique
   /// Único a nivel de catálogo maestro: es la clave de upsert cuando no hay SKU.
-  nombre            String   @unique
-  aliases           String[] @default([])
+  nombre            String       @unique
+  aliases           String[]     @default([])
   categoria         String
   unidadEstd        UnidadMedida
   /// Ítems con etiqueta (PA) de cocina: son preparaciones, no insumos crudos.
-  esProcesado       Boolean  @default(false)
+  esProcesado       Boolean      @default(false)
   /// Promedio histórico de stock, usado para detectar desviaciones (> 40%).
   stockHistoricoAvg Float?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   itemsInventario ItemInventario[]
-  recetaItems     RecetaItem[]
 
   @@map("articulos")
 }
@@ -177,33 +176,4 @@ model AlertaInventario {
   @@index([inventarioId])
   @@index([tipo])
   @@map("alertas_inventario")
-}
-
-/// Menú estándar (ej. "Ajiaco Santafereño x 50 porciones") usado para
-/// la explosión de insumos a partir de las porciones vendidas.
-model Receta {
-  id        String   @id @default(cuid())
-  nombre    String
-  porciones Int
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  items RecetaItem[]
-
-  @@map("recetas")
-}
-
-/// Insumo requerido por porción dentro de una receta.
-model RecetaItem {
-  id                 String   @id @default(cuid())
-  recetaId           String
-  receta             Receta   @relation(fields: [recetaId], references: [id], onDelete: Cascade)
-  articuloId         String
-  articulo           Articulo @relation(fields: [articuloId], references: [id])
-  cantidadPorPorcion Float
-  unidad             UnidadMedida
-
-  @@index([recetaId])
-  @@index([articuloId])
-  @@map("receta_items")
 }

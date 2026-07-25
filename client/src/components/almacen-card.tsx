@@ -1,8 +1,8 @@
 "use client";
 
-import { Warehouse } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ColsubsidioLogo } from "@/components/colsubsidio-logo";
 import { cn } from "@/lib/utils";
 import type { Almacen } from "@/lib/types";
 
@@ -22,23 +22,42 @@ export function AlmacenCard({
       onClick={onSelect}
       onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onSelect()}
       className={cn(
-        "cursor-pointer p-4 transition-all hover:border-primary/60 hover:bg-accent/40",
-        seleccionado && "border-primary bg-accent/60 ring-2 ring-primary",
+        /* Estado base: borde sutil, transición suave + lift de hover */
+        "cursor-pointer p-4 transition-all duration-200",
+        "hover:-translate-y-0.5 hover:border-primary/50 hover:bg-accent/40 hover:shadow-lg active:translate-y-0",
+        /* Estado seleccionado: azul primario Colsubsidio + anillo amarillo */
+        seleccionado && [
+          "border-primary bg-primary/10",
+          "ring-2 ring-secondary ring-offset-1 ring-offset-background",
+          "shadow-lg shadow-primary/20",
+        ],
       )}
     >
       <div className="flex items-start gap-3">
+        {/* Logo K Colsubsidio: sobre bg-secondary/20 en reposo → bg-primary al seleccionar */}
         <div
           className={cn(
-            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-primary",
-            seleccionado && "bg-primary text-primary-foreground",
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg p-1.5 transition-colors duration-200",
+            seleccionado
+              ? "bg-primary"         /* Azul Colsubsidio */
+              : "bg-secondary/20",   /* Amarillo tenue */
           )}
         >
-          <Warehouse className="h-5 w-5" />
+          <ColsubsidioLogo variant="color" size="xs" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium leading-tight">{almacen.nombre}</p>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">{almacen.codigo}</p>
-          <Badge variant="secondary" className="mt-2">
+          <p className="truncate font-semibold leading-tight">{almacen.nombre}</p>
+          <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+            {almacen.codigo}
+          </p>
+          <Badge
+            variant="secondary"
+            className={cn(
+              "mt-2 text-xs",
+              /* Unidades de negocio con color de acento amarillo */
+              seleccionado && "bg-secondary text-secondary-foreground",
+            )}
+          >
             {almacen.unidad}
           </Badge>
         </div>

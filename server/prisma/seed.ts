@@ -20,8 +20,6 @@ const USUARIOS_DEMO = [
 
 async function main() {
   // Reinicia el dominio para que el seed sea reproducible en local.
-  await prisma.recetaItem.deleteMany();
-  await prisma.receta.deleteMany();
   await prisma.alertaInventario.deleteMany();
   await prisma.itemInventario.deleteMany();
   await prisma.inventario.deleteMany();
@@ -101,7 +99,7 @@ async function main() {
           stockHistoricoAvg: 48.5,
         },
       }),
-      // 5. Insumo por kg, usado en la receta de prueba.
+      // 5. Artículo medido por kg, para probar dictados con conversión de unidad.
       prisma.articulo.create({
         data: {
           sku: '7700998877665',
@@ -112,27 +110,6 @@ async function main() {
         },
       }),
     ]);
-
-  const ajiaco = await prisma.receta.create({
-    data: {
-      nombre: 'Ajiaco Santafereño x 50 porciones',
-      porciones: 50,
-      items: {
-        create: [
-          {
-            articuloId: papaCriolla.id,
-            cantidadPorPorcion: 0.15,
-            unidad: UnidadMedida.KILOGRAMO,
-          },
-          {
-            articuloId: pechugaPollo.id,
-            cantidadPorPorcion: 0.12,
-            unidad: UnidadMedida.KILOGRAMO,
-          },
-        ],
-      },
-    },
-  });
 
   console.log('Seed completado:');
   console.log(
@@ -147,7 +124,6 @@ async function main() {
     pechugaPollo.nombre,
     papaCriolla.nombre,
   ]);
-  console.log('  Receta:', ajiaco.nombre);
 }
 
 main()

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 const REQUIRED_ENV_VARS = ['JWT_SECRET', 'ERP_WEBHOOK_API_KEY'] as const;
 
@@ -22,6 +23,7 @@ async function bootstrap() {
     origin: process.env.CORS_ORIGIN?.split(',') ?? 'http://localhost:3001',
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalFilters(new AllExceptionsFilter());
   await app.listen(process.env.PORT ?? 3000);
 }
 void bootstrap();

@@ -11,7 +11,7 @@ export interface VoiceMatchResult {
 }
 
 /** Por debajo de este umbral, la coincidencia se considera no confiable. */
-const VOICE_MATCH_MIN_SCORE = 0.2;
+const VOICE_MATCH_MIN_SCORE = 0.35;
 
 @Injectable()
 export class ArticuloService {

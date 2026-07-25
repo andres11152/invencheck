@@ -76,6 +76,8 @@ const UNIT_WORD_TO_ENUM: Record<string, UnidadMedida> = {
   kilos: UnidadMedida.KILOGRAMO,
   kilogramo: UnidadMedida.KILOGRAMO,
   kilogramos: UnidadMedida.KILOGRAMO,
+  libra: UnidadMedida.KILOGRAMO,
+  libras: UnidadMedida.KILOGRAMO,
   gramo: UnidadMedida.GRAMO,
   gramos: UnidadMedida.GRAMO,
   litro: UnidadMedida.LITRO,
@@ -138,13 +140,36 @@ function parseUpTo999(tokens: string[], i: number): NumberMatch | null {
   return null;
 }
 
-/** Reconoce un número (dígitos o palabra en español, con soporte de "mil") a partir de tokens[i]. */
+/** Reconoce un número (dígitos, palabras o fracciones habladas en español) a partir de tokens[i]. */
 function parseNumberAt(tokens: string[], i: number): NumberMatch | null {
   const t = tokens[i];
   if (t === undefined) return null;
 
+  // Fracciones autónomas: "medio", "media", "un cuarto", "tres cuartos"
+  if (t === 'medio' || t === 'media') {
+    return { value: 0.5, tokensConsumed: 1 };
+  }
+  if (t === 'un' && tokens[i + 1] === 'cuarto') {
+    return { value: 0.25, tokensConsumed: 2 };
+  }
+  if (t === 'tres' && tokens[i + 1] === 'cuartos') {
+    return { value: 0.75, tokensConsumed: 2 };
+  }
+
   if (/^\d+([.,]\d+)?$/.test(t)) {
-    return { value: parseFloat(t.replace(',', '.')), tokensConsumed: 1 };
+    let value = parseFloat(t.replace(',', '.'));
+    let tokensConsumed = 1;
+    if (
+      tokens[i + 1] === 'y' &&
+      (tokens[i + 2] === 'medio' || tokens[i + 2] === 'media')
+    ) {
+      value += 0.5;
+      tokensConsumed += 2;
+    } else if (tokens[i + 1] === 'y' && tokens[i + 2] === 'cuarto') {
+      value += 0.25;
+      tokensConsumed += 2;
+    }
+    return { value, tokensConsumed };
   }
 
   // "mil", "cinco mil", "cinco mil quinientos"...
@@ -168,7 +193,28 @@ function parseNumberAt(tokens: string[], i: number): NumberMatch | null {
     return { value, tokensConsumed };
   }
 
-  return parseUpTo999(tokens, i);
+  const base = parseUpTo999(tokens, i);
+  if (base) {
+    let value = base.value;
+    let tokensConsumed = base.tokensConsumed;
+    if (
+      tokens[i + tokensConsumed] === 'y' &&
+      (tokens[i + tokensConsumed + 1] === 'medio' ||
+        tokens[i + tokensConsumed + 1] === 'media')
+    ) {
+      value += 0.5;
+      tokensConsumed += 2;
+    } else if (
+      tokens[i + tokensConsumed] === 'y' &&
+      tokens[i + tokensConsumed + 1] === 'cuarto'
+    ) {
+      value += 0.25;
+      tokensConsumed += 2;
+    }
+    return { value, tokensConsumed };
+  }
+
+  return null;
 }
 
 function tokenize(texto: string): string[] {
@@ -183,8 +229,7 @@ function tokenize(texto: string): string[] {
 
 /**
  * Parser local (sin IA) de dictado de voz: "quince kilos de papa criolla y
- * noventa kilos de cebolla" -> dos ítems con cantidad/unidad/nombre. Se usa
- * como fallback cuando no hay OPENAI_API_KEY configurada o falla la llamada.
+ * noventa kilos de cebolla" -> dos ítems con cantidad/unidad/nombre.
  */
 export function parseVoiceItemsLocally(texto: string): DictadoVozItem[] {
   const tokens = tokenize(texto);
@@ -199,8 +244,29 @@ export function parseVoiceItemsLocally(texto: string): DictadoVozItem[] {
     }
 
     let j = i + num.tokensConsumed;
-    const unidadDictada = UNIT_WORD_TO_ENUM[tokens[j]];
-    if (unidadDictada) j++;
+    const unitToken = tokens[j];
+    const unidadDictada = UNIT_WORD_TO_ENUM[unitToken];
+    let cantidadCalculada = num.value;
+
+    if (unidadDictada) {
+      j++;
+      // Si la unidad fue "libra" o "libras" (500g), convertir la cantidad a KILOGRAMOS (0.5 kg por libra)
+      if (unitToken === 'libra' || unitToken === 'libras') {
+        cantidadCalculada = cantidadCalculada * 0.5;
+      }
+      // Soporte para "cinco kilos y medio de arroz" (fracción tras la unidad)
+      if (
+        tokens[j] === 'y' &&
+        (tokens[j + 1] === 'medio' || tokens[j + 1] === 'media')
+      ) {
+        cantidadCalculada += 0.5;
+        j += 2;
+      } else if (tokens[j] === 'y' && tokens[j + 1] === 'cuarto') {
+        cantidadCalculada += 0.25;
+        j += 2;
+      }
+    }
+
     if (CONNECTOR_WORDS.has(tokens[j])) j++;
 
     const nameTokens: string[] = [];
@@ -215,7 +281,7 @@ export function parseVoiceItemsLocally(texto: string): DictadoVozItem[] {
     if (nameTokens.length > 0) {
       items.push({
         articuloBusqueda: nameTokens.join(' '),
-        cantidad: num.value,
+        cantidad: cantidadCalculada,
         unidadDictada: unidadDictada ?? UnidadMedida.UNIDAD,
       });
     }

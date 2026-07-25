@@ -1,10 +1,16 @@
 "use client";
 
+// Ver nota en app/page.tsx: necesario para que "Collect page data" de
+// `next build` no falle con `TypeError: n.createContext is not a function`.
+export const dynamic = "force-dynamic";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Mic, Zap } from "lucide-react";
 import { toast } from "sonner";
 import type { EstadoInventario } from "@invencheck/shared";
 
 import { api, ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type { InventarioDetalle, ProcesarTomaPorVozResult } from "@/lib/types";
 import { useOfflineSync } from "@/hooks/use-offline-sync";
 import { InventarioHeader } from "@/components/inventario-header";
@@ -14,9 +20,13 @@ import { AnomaliaModal } from "@/components/anomalia-modal";
 import { AccionesCierre } from "@/components/acciones-cierre";
 import { ColaOfflineIndicator } from "@/components/cola-offline-indicator";
 import { AuditoriaCiegaCard } from "@/components/auditoria-ciega-card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ClientProviders } from "@/components/client-providers";
+import { useAuth } from "@/components/auth-provider";
 
-export default function InventarioPage({ params }: { params: { id: string } }) {
+function InventarioPageContent({ params }: { params: { id: string } }) {
+  const { usuario } = useAuth();
   const inventarioId = params.id;
 
   const [inventario, setInventario] = useState<InventarioDetalle | null>(null);
@@ -25,14 +35,30 @@ export default function InventarioPage({ params }: { params: { id: string } }) {
   const [procesandoVoz, setProcesandoVoz] = useState(false);
   const [voiceResetKey, setVoiceResetKey] = useState(0);
   const [ultimaFuenteIA, setUltimaFuenteIA] = useState<
-    "OPENAI" | "GEMINI" | "REGLAS_LOCALES" | null
+    "GEMINI" | "REGLAS_LOCALES" | null
   >(null);
 
-  // Anomalías "saltadas" en esta sesión (Re-dictar sin resolver todavía):
-  // no vuelven a mostrarse EN ESTA VISITA, pero NO se resuelven — si el
-  // operario recarga o cierra y vuelve, reaparecen. Así no se pueden
-  // ignorar permanentemente cerrando la pestaña.
-  const [saltados, setSaltados] = useState<Set<string>>(new Set());
+  // Cola de ids de ItemInventario con anomalía pendiente de revisar (por
+  // dictado nuevo o por click manual en una card). Se deriva la entrada
+  // mostrada del `inventario` actual, así que al confirmar/recargar y
+  // desaparecer la anomalía resuelta, automáticamente avanza a la siguiente
+  // de la cola sin lógica adicional.
+  const [anomaliaColaIds, setAnomaliaColaIds] = useState<string[]>([]);
+
+  const anomaliaModalEntrada = useMemo(() => {
+    if (!inventario) return null;
+    for (const id of anomaliaColaIds) {
+      const item = inventario.items.find((i) => i.id === id);
+      if (!item || !item.esAnomalia) continue;
+      const alertas = inventario.alertas.filter((a) => a.itemInventarioId === id);
+      if (alertas.length > 0) return { item, alertas };
+    }
+    return null;
+  }, [inventario, anomaliaColaIds]);
+
+  // Ids de ItemInventario que acaban de aparecer por el último dictado
+  // procesado: solo estos reciben la animación de entrada.
+  const [recienAgregados, setRecienAgregados] = useState<Set<string>>(new Set());
 
   const cargar = useCallback(async () => {
     try {
@@ -50,26 +76,31 @@ export default function InventarioPage({ params }: { params: { id: string } }) {
     void cargar();
   }, [cargar]);
 
-  // Se deriva directamente del inventario persistido (no de la respuesta de
-  // un solo dictado): sobrevive a recargas de página y a sincronizaciones
-  // offline, y es la fuente que realmente bloquea "Consolidar" en el backend.
-  const anomaliasPendientes = useMemo(() => {
-    if (!inventario) return [];
-    return inventario.items
-      .filter((item) => item.esAnomalia && !saltados.has(item.id))
-      .map((item) => ({
-        item,
-        alertas: inventario.alertas.filter((a) => a.itemInventarioId === item.id),
-      }))
-      .filter((entrada) => entrada.alertas.length > 0);
-  }, [inventario, saltados]);
-
-  const anomaliaActual = anomaliasPendientes[0] ?? null;
+  // Contar anomalías activas totales para indicadores
+  const anomaliasTotalesCount = useMemo(() => {
+    if (!inventario) return 0;
+    return inventario.items.filter((item) => item.esAnomalia).length;
+  }, [inventario]);
 
   function aplicarResultado(resultado: ProcesarTomaPorVozResult, origenOffline: boolean) {
+    const idsPrevios = new Set(inventario?.items.map((i) => i.id) ?? []);
+    const idsNuevos = resultado.inventario.items
+      .map((i) => i.id)
+      .filter((id) => !idsPrevios.has(id));
+
     setInventario(resultado.inventario);
     setUltimaFuenteIA(resultado.fuenteIA);
-    setSaltados(new Set()); // dictado nuevo: vuelve a mostrar todo lo pendiente
+
+    if (idsNuevos.length > 0) {
+      setRecienAgregados((prev) => new Set(Array.from(prev).concat(idsNuevos)));
+      window.setTimeout(() => {
+        setRecienAgregados((prev) => {
+          const next = new Set(prev);
+          idsNuevos.forEach((id) => next.delete(id));
+          return next;
+        });
+      }, 350);
+    }
 
     if (resultado.itemsNoMatcheados.length > 0) {
       toast.warning(
@@ -79,14 +110,24 @@ export default function InventarioPage({ params }: { params: { id: string } }) {
       );
     }
 
-    const anomalias = resultado.itemsMatcheados.filter((i) => i.esAnomalia);
-    if (anomalias.length === 0 && resultado.itemsMatcheados.length > 0) {
+    // Si la captura trajo una o más anomalías, encolamos TODOS los ítems
+    // anómalos de esta captura (no solo el primero) para que el modal los
+    // vaya mostrando uno tras otro al confirmar/redictar cada uno.
+    const idsAnomalos = resultado.itemsMatcheados
+      .filter((i) => i.esAnomalia)
+      .map(
+        (resumen) =>
+          resultado.inventario.items.find((i) => i.articuloId === resumen.articulo.id)?.id,
+      )
+      .filter((id): id is string => Boolean(id));
+
+    if (idsAnomalos.length > 0) {
+      setAnomaliaColaIds(idsAnomalos);
+    } else if (resultado.itemsMatcheados.length > 0) {
       const engineName =
         resultado.fuenteIA === "GEMINI"
           ? "Gemini AI"
-          : resultado.fuenteIA === "OPENAI"
-            ? "OpenAI"
-            : "reglas locales";
+          : "reglas locales";
       toast.success(
         `${resultado.itemsMatcheados.length} ítem(s) ${origenOffline ? "sincronizados" : "registrados"} sin anomalías (${engineName})`,
       );
@@ -114,8 +155,6 @@ export default function InventarioPage({ params }: { params: { id: string } }) {
             "Sin conexión: dictado guardado en este dispositivo, se enviará al volver la señal",
           );
         } catch {
-          // Último recurso: si ni siquiera IndexedDB funciona (ej. modo incógnito
-          // estricto), NO ocultamos el fallo — el operario debe anotarlo a mano.
           toast.error(`No se pudo guardar. ANOTA A MANO: "${texto}"`, { duration: Infinity });
         }
       } else {
@@ -127,22 +166,26 @@ export default function InventarioPage({ params }: { params: { id: string } }) {
   }
 
   async function handleConfirmarAnomalia() {
-    if (!anomaliaActual) return;
+    if (!anomaliaModalEntrada) return;
     try {
       await Promise.all(
-        anomaliaActual.alertas.map((a) => api.resolverAlerta(inventarioId, a.id)),
+        anomaliaModalEntrada.alertas.map((a) => api.resolverAlerta(inventarioId, a.id)),
       );
+      setAnomaliaColaIds((prev) => prev.filter((id) => id !== anomaliaModalEntrada.item.id));
       await cargar();
-      toast.success(`Cantidad confirmada: ${anomaliaActual.item.articulo.nombre}`);
+      toast.success(`Cantidad confirmada: ${anomaliaModalEntrada.item.articulo.nombre}`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "No se pudo confirmar la alerta");
     }
   }
 
   function handleRedictarAnomalia() {
-    if (!anomaliaActual) return;
-    toast.info(`Vuelve a dictar: ${anomaliaActual.item.articulo.nombre}`);
-    setSaltados((prev) => new Set(prev).add(anomaliaActual.item.id));
+    if (!anomaliaModalEntrada) return;
+    // Se saca de la cola solo para esta visita (no se resuelve la alerta):
+    // si hay más anomalías encoladas, el modal avanza a la siguiente; si el
+    // operario recarga o vuelve más tarde, esta reaparece porque sigue sin
+    // resolverse en el servidor.
+    setAnomaliaColaIds((prev) => prev.filter((id) => id !== anomaliaModalEntrada.item.id));
     setVoiceResetKey((k) => k + 1);
   }
 
@@ -152,10 +195,37 @@ export default function InventarioPage({ params }: { params: { id: string } }) {
 
   if (cargando) {
     return (
-      <main className="mx-auto max-w-3xl space-y-4 p-4 sm:p-8">
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-64 w-full" />
-        <Skeleton className="h-40 w-full" />
+      <main className="mx-auto max-w-6xl space-y-6 p-4 pb-10 sm:p-8">
+        {/* Skeleton con la silueta real del header (ícono + título + 2 stat tiles),
+         * no bloques genéricos — se lee como un placeholder del contenido real. */}
+        <div className="space-y-3">
+          <Skeleton className="h-4 w-24" />
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-10 w-10 shrink-0 rounded-xl" />
+            <div className="space-y-2">
+              <Skeleton className="h-6 w-48" />
+              <Skeleton className="h-3 w-32" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:max-w-sm">
+            <Skeleton className="h-16 rounded-lg" />
+            <Skeleton className="h-16 rounded-lg" />
+          </div>
+        </div>
+
+        <div className="lg:grid lg:grid-cols-[minmax(320px,420px)_1fr] lg:items-start lg:gap-6">
+          <div className="min-w-0 space-y-6">
+            <Skeleton className="h-64 w-full rounded-2xl" />
+          </div>
+          <div className="mt-6 min-w-0 space-y-6 lg:mt-0">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-32 w-full rounded-2xl" />
+              ))}
+            </div>
+            <Skeleton className="h-40 w-full rounded-2xl" />
+          </div>
+        </div>
       </main>
     );
   }
@@ -173,6 +243,18 @@ export default function InventarioPage({ params }: { params: { id: string } }) {
   return (
     <main className="mx-auto max-w-6xl space-y-6 p-4 pb-10 sm:p-8">
       <InventarioHeader inventario={inventario} />
+
+      {usuario?.rol !== "OPERARIO" && (
+        <div className="flex items-center gap-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-[#FFD000] shadow-[0_4px_20px_-4px_rgba(255,208,0,0.15)] animate-in fade-in slide-in-from-top-2 duration-300">
+          <Zap className="h-5 w-5 text-secondary animate-pulse shrink-0" />
+          <div>
+            <p className="font-semibold text-foreground">Modo Contingencia (Superusuario) Activo</p>
+            <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+              Estás registrando conteos en esta toma física utilizando privilegios globales de {usuario?.rol === "ADMIN" ? "Administrador" : "Auditor"}.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/*
         Tablet horizontal (≥1024px, `lg:`) es el uso real esperado en bodega:
@@ -211,17 +293,34 @@ export default function InventarioPage({ params }: { params: { id: string } }) {
               Ítems contados ({inventario.items.length})
             </h2>
             {inventario.items.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                Aún no hay ítems contados. Usa el dictado por voz para empezar.
-              </p>
+              <EmptyState
+                icon={Mic}
+                title="Aún no has contado nada aquí"
+                description="Dicta o escribe lo que ves en la bodega — el primer ítem aparece apenas lo proceses."
+              />
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {inventario.items.map((item) => (
-                  <ItemInventarioCard
+                  <div
                     key={item.id}
-                    item={item}
-                    alertas={inventario.alertas.filter((a) => a.itemInventarioId === item.id)}
-                  />
+                    className={cn(
+                      recienAgregados.has(item.id) &&
+                        "animate-in fade-in slide-in-from-bottom-2 duration-300",
+                    )}
+                  >
+                    <ItemInventarioCard
+                      item={item}
+                      esCiego={usuario?.rol === "OPERARIO"}
+                      alertas={inventario.alertas.filter((a) => a.itemInventarioId === item.id)}
+                      onRevisarAnomalia={() => {
+                        // Prioriza este ítem en la cola sin perder el resto de anomalías pendientes.
+                        setAnomaliaColaIds((prev) => [
+                          item.id,
+                          ...prev.filter((id) => id !== item.id),
+                        ]);
+                      }}
+                    />
+                  </div>
                 ))}
               </div>
             )}
@@ -232,11 +331,19 @@ export default function InventarioPage({ params }: { params: { id: string } }) {
       </div>
 
       <AnomaliaModal
-        entrada={anomaliaActual}
-        total={anomaliasPendientes.length}
+        entrada={anomaliaModalEntrada}
+        total={anomaliasTotalesCount}
         onConfirmar={handleConfirmarAnomalia}
         onRedictar={handleRedictarAnomalia}
       />
     </main>
+  );
+}
+
+export default function InventarioPage({ params }: { params: { id: string } }) {
+  return (
+    <ClientProviders>
+      <InventarioPageContent params={params} />
+    </ClientProviders>
   );
 }

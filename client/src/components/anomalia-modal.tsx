@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { AlertTriangle } from "lucide-react";
 import {
   Dialog,
@@ -29,6 +30,25 @@ export function AnomaliaModal({
   onConfirmar: () => void;
   onRedictar: () => void;
 }) {
+  // Emite una pulsación háptica al cargar por primera vez una anomalía (evitando ejecuciones múltiples)
+  useEffect(() => {
+    if (entrada !== null) {
+      try {
+        if (
+          typeof navigator !== "undefined" &&
+          typeof navigator.vibrate === "function"
+        ) {
+          // navigator.vibrate(200) puede fallar o lanzar intervención si no hay interacción previa.
+          // Se captura en un bloque try/catch para evitar romper el hilo de ejecución/render de React.
+          navigator.vibrate(200);
+        }
+      } catch {
+        // Intervención del navegador o falta de soporte para la API de vibración (captura silenciosa)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entrada?.item.id]); // Solo se dispara cuando el id del item cambia, previniendo loops infinitos en re-renders.
+
   return (
     <Dialog
       open={entrada !== null}
@@ -36,12 +56,23 @@ export function AnomaliaModal({
         if (!open) onRedictar();
       }}
     >
-      <DialogContent onInteractOutside={(e) => e.preventDefault()}>
+      {/*
+        `animate-pulse-ring` es una animación CSS infinita (ver tailwind.config.ts):
+        Radix usa el evento `animationend` sobre este mismo nodo para saber cuándo
+        terminó la animación de salida y desmontarlo. Una animación infinita nunca
+        dispara `animationend`, así que el modal quedaba fantasma en el DOM (overlay
+        de pantalla completa bloqueando clics) después de confirmar/cerrar. El pulso
+        va en el ícono, no en el DialogContent.
+      */}
+      <DialogContent
+        className="border-destructive/50"
+        onInteractOutside={(e) => e.preventDefault()}
+      >
         {entrada && (
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-destructive">
-                <AlertTriangle className="h-5 w-5" />
+                <AlertTriangle className="h-5 w-5 animate-pulse-ring" />
                 ¿Confirmas {formatCantidad(entrada.item.conteoFisico, entrada.item.unidadUsada)} de{" "}
                 {entrada.item.articulo.nombre}?
               </DialogTitle>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Mic, MicOff, Send } from "lucide-react";
+import { Camera, Loader2, Mic, MicOff, Send } from "lucide-react";
 
 import { useSpeechRecognition } from "@/hooks/use-speech-recognition";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { BarcodeScannerModal } from "@/components/barcode-scanner-modal";
 
 export function VoiceCapture({
   onProcesar,
@@ -19,11 +20,12 @@ export function VoiceCapture({
   onProcesar: (texto: string) => void;
   procesando: boolean;
   autoFocusTexto?: boolean;
-  fuenteIA?: "OPENAI" | "GEMINI" | "REGLAS_LOCALES" | null;
+  fuenteIA?: "GEMINI" | "REGLAS_LOCALES" | null;
 }) {
   const { isSupported, estado, transcript, interim, start, stop, reset } =
     useSpeechRecognition("es-CO");
   const [texto, setTexto] = useState("");
+  const [escanerAbierto, setEscanerAbierto] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -61,72 +63,104 @@ export function VoiceCapture({
       : "Listo para dictar";
 
   return (
-    <Card>
+    <Card className="border-primary/20 bg-card/70 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.06),0_10px_40px_-16px_hsl(var(--primary)/0.35)]">
       <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-3 sm:space-y-0 pb-4 border-b border-border/40">
         <div className="space-y-1">
-          <CardTitle className="flex items-center gap-2">Dictado por Voz</CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="flex items-center gap-2">Dictado por Voz</CardTitle>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setEscanerAbierto(true)}
+              className="h-7 px-2.5 text-xs gap-1 border-primary/30 hover:bg-primary/10 text-primary"
+            >
+              <Camera className="h-3.5 w-3.5" /> Escáner SKU
+            </Button>
+          </div>
           <CardDescription>
             Ej: &quot;quince kilos de papa criolla y noventa kilos de cebolla&quot;
           </CardDescription>
         </div>
         <div className="flex sm:justify-end">
+          {/* Badges de estado IA usando tokens de marca Colsubsidio */}
           {fuenteIA === "GEMINI" && (
-            <div className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-3.5 py-1 text-xs font-semibold text-blue-500 shadow-[0_0_12px_rgba(59,130,246,0.2)]">
+            <div className="flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1 text-xs font-semibold text-primary shadow-sm backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-300">
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-primary"></span>
               </span>
-              Gemini 3.5 Active
-            </div>
-          )}
-          {fuenteIA === "OPENAI" && (
-            <div className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3.5 py-1 text-xs font-semibold text-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.2)]">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              OpenAI Active
+              IA Gemini Activa
             </div>
           )}
           {fuenteIA === "REGLAS_LOCALES" && (
-            <div className="flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3.5 py-1 text-xs font-semibold text-amber-500">
-              <span className="h-2 w-2 rounded-full bg-amber-500" />
-              Offline Rules (No AI)
+            <div className="flex items-center gap-1.5 rounded-full border border-secondary/40 bg-secondary/10 px-3.5 py-1 text-xs font-semibold text-secondary backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-300">
+              <span className="h-2 w-2 rounded-full bg-secondary" />
+              Sin Conexión · Reglas Locales
             </div>
           )}
           {fuenteIA === null && (
             <div className="flex items-center gap-1.5 rounded-full border border-muted bg-muted/20 px-3.5 py-1 text-xs font-medium text-muted-foreground">
               <span className="h-2 w-2 rounded-full bg-muted-foreground/30" />
-              AI Parser Standby
+              En Espera
             </div>
           )}
         </div>
       </CardHeader>
       <CardContent className="flex flex-col items-center gap-4">
-        <button
-          type="button"
-          onClick={handleMicClick}
-          disabled={!isSupported || procesando}
-          aria-label={escuchando ? "Detener dictado" : "Iniciar dictado"}
-          className={cn(
-            "flex h-24 w-24 items-center justify-center rounded-full text-primary-foreground shadow-lg transition-transform active:scale-95 disabled:cursor-not-allowed disabled:opacity-40",
-            escuchando ? "bg-destructive animate-pulse-ring" : "bg-primary hover:bg-primary/90",
-          )}
-        >
-          {procesando ? (
-            <Loader2 className="h-9 w-9 animate-spin" />
-          ) : escuchando ? (
-            <MicOff className="h-9 w-9" />
-          ) : (
-            <Mic className="h-9 w-9" />
-          )}
-        </button>
+        <div className="relative flex flex-col items-center justify-center my-2">
+          {/* Resplandor ambiental de fondo (Ambient Glow) */}
+          <div
+            className={cn(
+              "absolute inset-0 rounded-full blur-2xl transition-all duration-500",
+              escuchando
+                ? "bg-destructive/35 scale-125"
+                : "bg-primary/20 scale-100 opacity-60",
+            )}
+          />
+
+          <button
+            type="button"
+            onClick={handleMicClick}
+            disabled={!isSupported || procesando}
+            aria-label={escuchando ? "Detener dictado" : "Iniciar dictado"}
+            className={cn(
+              "relative z-10 flex h-24 w-24 items-center justify-center rounded-full text-primary-foreground shadow-xl transition-all duration-300 hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100",
+              escuchando
+                ? "bg-destructive shadow-[0_0_35px_rgba(239,68,68,0.6)] animate-pulse"
+                : "bg-primary shadow-primary/40 hover:bg-primary/90 hover:shadow-[0_0_30px_rgba(0,103,177,0.5)]",
+            )}
+          >
+            {procesando ? (
+              <Loader2 className="h-9 w-9 animate-spin" />
+            ) : escuchando ? (
+              <MicOff className="h-9 w-9" />
+            ) : (
+              <Mic className="h-9 w-9" />
+            )}
+          </button>
+        </div>
+
+        {/* Ecualizador Gráfico de Ondas de Sonido (Audio Waveform Visualizer) */}
+        {escuchando && (
+          <div className="flex items-center justify-center gap-1.5 h-8 my-1 animate-in fade-in-0 duration-300">
+            {[0.1, 0.4, 0.2, 0.6, 0.3, 0.5, 0.15].map((delay, idx) => (
+              <span
+                key={idx}
+                className="w-1.5 rounded-full bg-secondary shadow-[0_0_8px_hsl(var(--secondary))]"
+                style={{
+                  animation: `audio-wave 0.8s ease-in-out infinite alternate`,
+                  animationDelay: `${delay}s`,
+                }}
+              />
+            ))}
+          </div>
+        )}
 
         <p
           className={cn(
-            "text-sm font-medium",
-            escuchando && "text-destructive",
-            procesando && "text-primary",
+            "text-sm font-medium transition-colors",
+            escuchando && "text-destructive font-semibold",
+            procesando && "text-secondary font-semibold",   /* Amarillo Colsubsidio mientras procesa */
           )}
         >
           {estadoLabel}
@@ -160,6 +194,12 @@ export function VoiceCapture({
           Procesar Dictado
         </Button>
       </CardContent>
+
+      <BarcodeScannerModal
+        abierto={escanerAbierto}
+        onCerrar={() => setEscanerAbierto(false)}
+        onEscanear={(textoDictado) => onProcesar(textoDictado)}
+      />
     </Card>
   );
 }

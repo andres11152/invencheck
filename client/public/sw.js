@@ -1,5 +1,5 @@
 const CACHE_NAME = "invencheck-shell-v1";
-const APP_SHELL = ["/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
+const APP_SHELL = ["/", "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

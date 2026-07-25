@@ -39,6 +39,18 @@ export class AnomaliasService {
     teorico: number;
     conteoFisico: number;
     unidadDictada: UnidadMedida;
+    /**
+     * Promedio histórico de ESTA bodega específica para este artículo
+     * (calculado en InventarioRepository.promedioHistoricoPorAlmacen a
+     * partir de tomas físicas pasadas). Tiene prioridad sobre
+     * `articulo.stockHistoricoAvg` (que es un promedio global entre TODAS
+     * las bodegas, importado del catálogo) — "el patrón de esa bodega" es
+     * más preciso que un promedio mezclado entre 48 sedes con niveles de
+     * stock normal muy distintos entre sí. `undefined`/`null` cuando esa
+     * bodega todavía no tiene historial propio (bodega nueva o primera
+     * toma de este artículo ahí) — en ese caso cae al promedio global.
+     */
+    promedioHistoricoBodega?: number | null;
   }): EvaluacionConteo {
     const { articulo, teorico } = params;
     const alertas: AlertaGenerada[] = [];
@@ -73,8 +85,15 @@ export class AnomaliasService {
       });
     }
 
-    // Regla 1: variación excesiva frente al histórico.
-    const avg = articulo.stockHistoricoAvg;
+    // Regla 1: variación excesiva frente al histórico — prioriza el
+    // promedio de ESTA bodega; si no hay (bodega sin historial propio
+    // todavía para este artículo), cae al promedio global del catálogo.
+    const usaHistoricoBodega =
+      params.promedioHistoricoBodega !== undefined &&
+      params.promedioHistoricoBodega !== null;
+    const avg = usaHistoricoBodega
+      ? params.promedioHistoricoBodega!
+      : articulo.stockHistoricoAvg;
     if (avg !== null && avg > 0) {
       const variacion = (conteoFisico - avg) / avg;
       if (
@@ -82,11 +101,14 @@ export class AnomaliasService {
         variacion < ANOMALIA_VARIACION_MIN
       ) {
         esAnomalia = true;
+        const fuente = usaHistoricoBodega
+          ? 'del histórico de esta bodega'
+          : 'del histórico general del catálogo';
         alertas.push({
           tipo: TipoAlerta.ANOMALIA_CANTIDAD,
           mensaje: `Conteo de ${conteoFisico} ${unidadUsada} se desvía ${Math.round(
             variacion * 100,
-          )}% del histórico (${avg.toFixed(2)}) para "${articulo.nombre}".`,
+          )}% ${fuente} (${avg.toFixed(2)}) para "${articulo.nombre}".`,
         });
       }
     }

@@ -223,6 +223,73 @@ describe('AnomaliasService', () => {
     });
   });
 
+  describe('promedioHistoricoBodega tiene prioridad sobre el promedio global', () => {
+    it('usa el promedio de la bodega en vez del global cuando ambos están presentes', () => {
+      // Global dice 100 (conteo de 105 sería normal contra eso), pero esta
+      // bodega normalmente tiene 9 — 105 contra 9 es una desviación enorme.
+      const resultado = service.evaluarConteo({
+        articulo: crearArticulo({ stockHistoricoAvg: 100 }),
+        teorico: 9,
+        conteoFisico: 90,
+        unidadDictada: UnidadMedida.KILOGRAMO,
+        promedioHistoricoBodega: 9,
+      });
+
+      expect(resultado.esAnomalia).toBe(true);
+      expect(resultado.alertas).toEqual([
+        expect.objectContaining({ tipo: TipoAlerta.ANOMALIA_CANTIDAD }),
+      ]);
+      expect(resultado.alertas[0].mensaje).toContain('de esta bodega');
+    });
+
+    it('NO marca anomalía si el conteo es normal para el promedio de la bodega, aunque se desvíe del global', () => {
+      // Global dice 100 -> 9 sería -91%, anómalo contra el global. Pero
+      // esta bodega normalmente tiene 9 -> 9 es exactamente su promedio.
+      const resultado = service.evaluarConteo({
+        articulo: crearArticulo({ stockHistoricoAvg: 100 }),
+        teorico: 9,
+        conteoFisico: 9,
+        unidadDictada: UnidadMedida.KILOGRAMO,
+        promedioHistoricoBodega: 9,
+      });
+
+      expect(resultado.esAnomalia).toBe(false);
+      expect(resultado.alertas).toHaveLength(0);
+    });
+
+    it('cae al promedio global cuando la bodega no tiene historial propio (null)', () => {
+      const resultado = service.evaluarConteo({
+        articulo: crearArticulo({ stockHistoricoAvg: 100 }),
+        teorico: 100,
+        conteoFisico: 301, // variación = 2.01 > +200% contra el global (100)
+        unidadDictada: UnidadMedida.KILOGRAMO,
+        promedioHistoricoBodega: null,
+      });
+
+      expect(resultado.esAnomalia).toBe(true);
+      expect(resultado.alertas).toEqual([
+        expect.objectContaining({ tipo: TipoAlerta.ANOMALIA_CANTIDAD }),
+      ]);
+      expect(resultado.alertas[0].mensaje).toContain(
+        'histórico general del catálogo',
+      );
+    });
+
+    it('cae al promedio global cuando no se pasa promedioHistoricoBodega (compatibilidad hacia atrás)', () => {
+      const resultado = service.evaluarConteo({
+        articulo: crearArticulo({ stockHistoricoAvg: 100 }),
+        teorico: 100,
+        conteoFisico: 301,
+        unidadDictada: UnidadMedida.KILOGRAMO,
+      });
+
+      expect(resultado.esAnomalia).toBe(true);
+      expect(resultado.alertas[0].mensaje).toContain(
+        'histórico general del catálogo',
+      );
+    });
+  });
+
   describe('combinación de reglas', () => {
     it('puede disparar STOCK_NEGATIVO y ANOMALIA_CANTIDAD a la vez', () => {
       const resultado = service.evaluarConteo({

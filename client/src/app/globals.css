@@ -2,49 +2,108 @@
 @tailwind components;
 @tailwind utilities;
 
-/*
- * Tema industrial/corporativo (azules oscuros) para InvenCheck.
- * Un solo tema oscuro por diseño: la app se usa en bodegas, no hay
- * selector claro/oscuro.
- */
+/* =============================================================================
+   COLSUBSIDIO DESIGN SYSTEM — TOKEN LAYER
+   Fuente oficial de la marca: Pantone 109 C / Pantone 2196 C / Pantone Cool Gray 11 C
+   
+   ESTRUCTURA:
+     1. Paleta de marca (primitivos) — nunca usar directamente en componentes
+     2. Tokens semánticos (roles)   — única fuente verdad para componentes
+     3. Utilidades globales
+   ============================================================================= */
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   1. PRIMITIVOS DE MARCA COLSUBSIDIO
+   Definidos como variables @property-safe en :root para que Tailwind
+   + CSS pueda leerlas sin importar el modo (siempre disponibles).
+   ───────────────────────────────────────────────────────────────────────────── */
 :root {
-  --background: 222 47% 7%;
-  --foreground: 210 40% 96%;
+  /* Amarillo Colsubsidio — Pantone 109 C · #FFD000 · rgb(255,208,0) */
+  --csb-amarillo-100: 49 100% 50%;    /* #FFD000 */
+  --csb-amarillo-80:  49 100% 60%;    /* #FFD933 */
+  --csb-amarillo-60:  49 100% 70%;    /* #FFE266 */
+  --csb-amarillo-40:  49 100% 80%;    /* #FFEEAA */
+  --csb-amarillo-20:  49 100% 92%;    /* #FFF8D6 */
 
-  --card: 222 40% 11%;
-  --card-foreground: 210 40% 96%;
+  /* Azul Colsubsidio — Pantone 2196 C · #0067B1 · rgb(0,103,177) */
+  --csb-azul-100: 208 100% 35%;       /* #0067B1 */
+  --csb-azul-80:  208  76% 44%;       /* #1E7FC4 */
+  --csb-azul-60:  208  60% 55%;       /* #5099CE */
+  --csb-azul-40:  208  57% 68%;       /* #86B8DC */
+  --csb-azul-20:  208  55% 85%;       /* #C2D9EE */
 
-  --popover: 222 42% 10%;
-  --popover-foreground: 210 40% 96%;
+  /* Grafito Colsubsidio — Pantone Cool Gray 11 C · #575756 · rgb(87,87,86) */
+  --csb-grafito-100: 60  1% 34%;      /* #575756 */
+  --csb-grafito-80:  60  1% 45%;      /* #737372 */
+  --csb-grafito-60:  60  1% 57%;      /* #929291 */
+  --csb-grafito-40:  60  1% 73%;      /* #BABAB9 */
+  --csb-grafito-20:  60  1% 88%;      /* #E0E0DF */
 
-  --primary: 217 91% 60%;
-  --primary-foreground: 222 47% 8%;
-
-  --secondary: 222 35% 18%;
-  --secondary-foreground: 210 40% 96%;
-
-  --muted: 222 35% 15%;
-  --muted-foreground: 215 20% 65%;
-
-  --accent: 222 35% 20%;
-  --accent-foreground: 210 40% 96%;
-
-  --destructive: 0 72% 51%;
-  --destructive-foreground: 210 40% 98%;
-
-  --warning: 38 92% 50%;
-  --warning-foreground: 26 83% 10%;
-
-  --success: 142 71% 45%;
-  --success-foreground: 144 61% 8%;
-
-  --border: 222 30% 20%;
-  --input: 222 30% 20%;
-  --ring: 217 91% 60%;
-
-  --radius: 0.75rem;
+  /* Blanco y Negro absolutos */
+  --csb-blanco: 0 0% 100%;
+  --csb-negro:  0 0% 5%;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   2. TOKENS SEMÁNTICOS — TEMA OSCURO CORPORATIVO (único tema de bodega)
+   Los componentes SOLO deben referenciar estos tokens, nunca los primitivos.
+   ───────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Superficies */
+  --background:       208 35%  8%;    /* Azul-grafito profundo de bodega    */
+  --foreground:       208 20% 93%;    /* Texto principal: casi blanco azulado */
+
+  --card:             208 30% 12%;    /* Tarjetas elevadas                   */
+  --card-foreground:  208 20% 93%;
+
+  --popover:          208 28% 11%;
+  --popover-foreground: 208 20% 93%;
+
+  /* ─── PRIMARIO = Azul Colsubsidio ─── */
+  --primary:          208 100% 35%;   /* csb-azul-100 → #0067B1              */
+  --primary-foreground: 0 0% 100%;    /* Texto blanco sobre azul             */
+
+  /* ─── SECUNDARIO = Amarillo Colsubsidio ─── */
+  --secondary:        49 100% 50%;    /* csb-amarillo-100 → #FFD000          */
+  --secondary-foreground: 208 100% 22%; /* Texto azul oscuro sobre amarillo  */
+
+  /* Superficies muted y accent */
+  --muted:            208 25% 17%;
+  --muted-foreground: 208 15% 62%;    /* Grafito intermedio                  */
+
+  --accent:           208 30% 20%;    /* Hover state en superficie oscura    */
+  --accent-foreground: 208 20% 93%;
+
+  /* Semánticos funcionales */
+  --destructive:      0  72% 51%;
+  --destructive-foreground: 0 0% 98%;
+
+  --warning:          49 100% 50%;    /* Amarillo Colsubsidio como warning    */
+  --warning-foreground: 208 100% 22%;
+
+  --success:          142 71% 45%;
+  --success-foreground: 144 61% 8%;
+
+  --info:             208 100% 35%;   /* Azul Colsubsidio como info          */
+  --info-foreground:  0 0% 100%;
+
+  /* Bordes e inputs */
+  --border:           208 25% 22%;
+  --input:            208 25% 22%;
+  --ring:             49 100% 50%;    /* Focus ring = Amarillo Colsubsidio   */
+
+  /* Radio de borde base */
+  --radius: 0.75rem;
+
+  /* ─── Tokens de marca expuestos para uso directo cuando sea necesario ─── */
+  --brand-primary:    hsl(var(--csb-azul-100));
+  --brand-secondary:  hsl(var(--csb-amarillo-100));
+  --brand-neutral:    hsl(var(--csb-grafito-100));
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   3. RESET Y BASE
+   ───────────────────────────────────────────────────────────────────────────── */
 * {
   border-color: hsl(var(--border));
 }
@@ -52,13 +111,122 @@
 body {
   color: hsl(var(--foreground));
   background: hsl(var(--background));
+  /* Mejora de renderizado en pantallas de bodega */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
+/* Respeta la preferencia de sistema de reducir movimiento — las
+   microanimaciones son decorativas, nunca deben ser la única forma de
+   percibir un cambio de estado. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   4. UTILITARIAS PERSONALIZADAS
+   ───────────────────────────────────────────────────────────────────────────── */
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
   .safe-bottom {
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* NOTA DE DISEÑO — glassmorphism:
+   * Deliberadamente NO hay una clase `.glass` custom acá. `tailwind-merge`
+   * (usado por `cn()`) sólo sabe deduplicar clases de utilidad reales de
+   * Tailwind (bg-*, border-*, etc.) — una clase custom con `background`/
+   * `border` en CSS plano no entra en ese sistema de conflictos, así que un
+   * className del caller como "border-destructive/50" (ver anomalia-modal.tsx)
+   * competiría con ella por orden de hoja de estilos en vez de ganar de forma
+   * predecible. Por eso el "glass" se compone siempre con utilidades reales
+   * (`bg-card/65 border border-border/70 shadow-[...]`, + `backdrop-blur-xl`
+   * para la variante con blur real) directamente en cada componente — ver
+   * `ui/card.tsx`, `ui/dialog.tsx`, `ui/select.tsx`, `ui/dropdown-menu.tsx`.
+   */
+
+  /* Gradiente de marca Colsubsidio — uso en headers/hero */
+  .bg-brand-gradient {
+    background: linear-gradient(
+      135deg,
+      hsl(var(--csb-azul-100)) 0%,
+      hsl(var(--csb-azul-80)) 60%,
+      hsl(var(--csb-azul-60)) 100%
+    );
+  }
+
+  /* Acento amarillo brillante — CTAs, badges de alta visibilidad */
+  .bg-amarillo {
+    background-color: hsl(var(--csb-amarillo-100));
+    color: hsl(var(--csb-azul-100));
+  }
+
+  /* Borde de énfasis de marca */
+  .border-brand {
+    border-color: hsl(var(--csb-amarillo-100));
+  }
+
+  /* Texto de marca azul */
+  .text-brand-azul {
+    color: hsl(var(--csb-azul-100));
+  }
+
+  /* Texto de marca amarillo */
+  .text-brand-amarillo {
+    color: hsl(var(--csb-amarillo-100));
+  }
+
+  /* Forzar que el icono de calendario nativo de inputs date se vea blanco en desktop y mobile */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1) brightness(100);
+    cursor: pointer;
+    opacity: 0.8;
+    transition: opacity 0.2s ease;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
+
+  /* Animación del Ecualizador de Voz (Audio Waveform Visualizer) */
+  @keyframes audio-wave {
+    0%, 100% {
+      height: 6px;
+    }
+    50% {
+      height: 28px;
+    }
+  }
+
+  .animate-audio-bar {
+    animation: audio-wave 1.2s ease-in-out infinite;
+  }
+
+  /* Estilos de Impresión / PDF Directo */
+  @media print {
+    header,
+    nav,
+    button,
+    .no-print {
+      display: none !important;
+    }
+
+    body {
+      background: white !important;
+      color: black !important;
+    }
+
+    main {
+      padding: 0 !important;
+      max-width: 100% !important;
+    }
   }
 }

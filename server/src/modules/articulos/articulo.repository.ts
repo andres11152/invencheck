@@ -74,20 +74,27 @@ export class ArticuloRepository {
   }
 
   /**
-   * Ranking por similitud de trigramas (pg_trgm) contra nombre y aliases,
-   * insensible a acentos (unaccent). Clave para mapear dictado de voz.
+   * Ranking por similitud de trigramas (pg_trgm) + bonificación por palabra clave
+   * exacta contra nombre y aliases, insensible a acentos (unaccent).
    */
   findBestMatches(
     normalizedQuery: string,
     limit = 5,
   ): Promise<ArticuloMatch[]> {
     return this.prisma.$queryRaw<ArticuloMatch[]>`
-      SELECT a.*, GREATEST(
-        similarity(unaccent(lower(a.nombre)), ${normalizedQuery}),
-        COALESCE((
-          SELECT MAX(similarity(unaccent(lower(alias)), ${normalizedQuery}))
-          FROM unnest(a.aliases) AS alias
-        ), 0)
+      SELECT a.*, (
+        GREATEST(
+          similarity(public.f_unaccent(lower(a.nombre)), ${normalizedQuery}),
+          COALESCE((
+            SELECT MAX(similarity(public.f_unaccent(lower(alias)), ${normalizedQuery}))
+            FROM unnest(a.aliases) AS alias
+          ), 0)
+        )
+        + CASE 
+            WHEN public.f_unaccent(lower(a.nombre)) = ${normalizedQuery} THEN 0.5
+            WHEN public.f_unaccent(lower(a.nombre)) ILIKE ${'%' + normalizedQuery + '%'} THEN 0.25
+            ELSE 0 
+          END
       ) AS score
       FROM articulos a
       ORDER BY score DESC
@@ -98,19 +105,41 @@ export class ArticuloRepository {
   /**
    * Upsert masivo por `sku` (si existe) o `nombre` (catálogo maestro).
    *
-   * No se usa `prisma.articulo.upsert()` porque solo resuelve conflicto
-   * contra UNA clave única a la vez: una fila entrante con un `sku` nuevo
-   * pero un `nombre` que ya existe con otro sku (p. ej. reimportar sobre
-   * datos de seed) rompería el unique de `nombre` al intentar el CREATE.
-   * Por eso se busca primero por sku O nombre y se decide update/create.
+   * Optimizado en 2 fases para eliminar la latencia N+1:
+   * 1. Precarga en lote (1 sola consulta SELECT `findMany`) de todos los registros
+   *    existentes que coincidan por `sku` o `nombre`.
+   * 2. Mapeo en memoria y ejecución de todas las operaciones (update/create)
+   *    dentro de un solo bloque `$transaction` de Prisma.
    */
   async upsertMany(rows: ArticuloUpsertInput[]): Promise<number> {
+    if (rows.length === 0) return 0;
+
+    const skus = rows.map((r) => r.sku).filter((s): s is string => Boolean(s));
+    const nombres = rows.map((r) => r.nombre);
+
+    const existencias = await this.prisma.articulo.findMany({
+      where: {
+        OR: [
+          ...(skus.length > 0 ? [{ sku: { in: skus } }] : []),
+          { nombre: { in: nombres } },
+        ],
+      },
+    });
+
+    const porSku = new Map<string, Articulo>();
+    const porNombre = new Map<string, Articulo>();
+
+    for (const item of existencias) {
+      if (item.sku) porSku.set(item.sku, item);
+      porNombre.set(item.nombre, item);
+    }
+
+    const ops: Prisma.PrismaPromise<unknown>[] = [];
+
     for (const row of rows) {
-      const existing = await this.prisma.articulo.findFirst({
-        where: row.sku
-          ? { OR: [{ sku: row.sku }, { nombre: row.nombre }] }
-          : { nombre: row.nombre },
-      });
+      const existing =
+        (row.sku ? porSku.get(row.sku) : undefined) ??
+        porNombre.get(row.nombre);
 
       const data = {
         sku: row.sku,
@@ -123,11 +152,15 @@ export class ArticuloRepository {
       };
 
       if (existing) {
-        await this.prisma.articulo.update({ where: { id: existing.id }, data });
+        ops.push(
+          this.prisma.articulo.update({ where: { id: existing.id }, data }),
+        );
       } else {
-        await this.prisma.articulo.create({ data });
+        ops.push(this.prisma.articulo.create({ data }));
       }
     }
+
+    await this.prisma.$transaction(ops);
     return rows.length;
   }
 }

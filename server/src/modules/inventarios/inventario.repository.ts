@@ -39,6 +39,24 @@ export interface UpsertItemInput {
   esAnomalia: boolean;
 }
 
+export interface IncrementarConteoInput {
+  inventarioId: string;
+  articuloId: string;
+  /** Ya convertido a `Articulo.unidadEstd` — este método no convierte unidades. */
+  delta: number;
+  unidadUsada: UnidadMedida;
+  /** Solo se usa si el ítem no existía todavía (rama `create` del upsert). */
+  teoricoInicial: number;
+}
+
+export interface MarcarUnidadAmbiguaInput {
+  inventarioId: string;
+  articuloId: string;
+  teoricoInicial: number;
+  cantidadDictada: number;
+  unidadDictada: UnidadMedida;
+}
+
 export interface CrearAlertaInput {
   inventarioId: string;
   itemInventarioId?: string;
@@ -86,6 +104,33 @@ export class InventarioRepository {
     });
   }
 
+  /**
+   * Promedio histórico de conteos de ESTE artículo en ESTA bodega
+   * específica (tomas físicas pasadas), excluyendo el inventario actual —
+   * no tendría sentido comparar el conteo contra sí mismo mientras se está
+   * armando en vivo. `null` si esta bodega todavía no tiene ningún
+   * historial propio de este artículo (bodega nueva, o primera vez que se
+   * cuenta ahí) — el llamador decide cómo degradar (cae al promedio global
+   * del catálogo en `AnomaliasService.evaluarConteo`).
+   */
+  async promedioHistoricoPorAlmacen(
+    articuloId: string,
+    almacenId: string,
+    excluirInventarioId: string,
+  ): Promise<number | null> {
+    const result = await this.prisma.itemInventario.aggregate({
+      where: {
+        articuloId,
+        inventarioId: { not: excluirInventarioId },
+        inventario: { almacenId },
+      },
+      _avg: { conteoFisico: true },
+      _count: true,
+    });
+    if (result._count === 0) return null;
+    return result._avg.conteoFisico;
+  }
+
   /** Una sola línea por artículo: recontar el mismo artículo actualiza la línea existente. */
   upsertItem(data: UpsertItemInput): Promise<ItemInventario> {
     return this.prisma.itemInventario.upsert({
@@ -102,6 +147,87 @@ export class InventarioRepository {
         esAnomalia: data.esAnomalia,
       },
       create: data,
+    });
+  }
+
+  /**
+   * Suma `delta` al conteo físico existente de forma ATÓMICA en Postgres
+   * (`UPDATE ... SET "conteoFisico" = "conteoFisico" + $delta`) en vez de
+   * leer-sumar-escribir desde código de aplicación. Evita el "lost update":
+   * si dos operarios dictan el mismo artículo casi al mismo tiempo, cada
+   * request le dice a Postgres "súmale esto" — nunca "ponlo en X" — así que
+   * ninguna de las dos escrituras puede pisar a la otra, sin importar el
+   * orden en que lleguen.
+   *
+   * `esAnomalia` se deja en `false` en la rama `create` y sin tocar en la
+   * rama `update` — el llamador la corrige en un segundo paso con
+   * `actualizarEsAnomalia`, después de evaluar la anomalía contra el TOTAL
+   * ya sumado (que este método devuelve), nunca contra un valor leído antes
+   * del incremento.
+   */
+  incrementarConteo(input: IncrementarConteoInput): Promise<ItemInventario> {
+    return this.prisma.itemInventario.upsert({
+      where: {
+        inventarioId_articuloId: {
+          inventarioId: input.inventarioId,
+          articuloId: input.articuloId,
+        },
+      },
+      update: {
+        conteoFisico: { increment: input.delta },
+        unidadUsada: input.unidadUsada,
+      },
+      create: {
+        inventarioId: input.inventarioId,
+        articuloId: input.articuloId,
+        teorico: input.teoricoInicial,
+        conteoFisico: input.delta,
+        unidadUsada: input.unidadUsada,
+        esAnomalia: false,
+      },
+    });
+  }
+
+  actualizarEsAnomalia(
+    itemInventarioId: string,
+    esAnomalia: boolean,
+  ): Promise<ItemInventario> {
+    return this.prisma.itemInventario.update({
+      where: { id: itemInventarioId },
+      data: { esAnomalia },
+    });
+  }
+
+  /**
+   * Unidad dictada sin conversión conocida al estándar del catálogo: no se
+   * puede sumar con seguridad al conteo acumulado (mezclaría unidades
+   * incompatibles como si fueran la misma). Si el artículo no tenía conteo
+   * todavía, se crea con el valor tal cual se dictó — visible aunque esté en
+   * la unidad "equivocada", para que se note y se corrija — pero si YA
+   * existía, la rama `update` sólo toca `esAnomalia`: nunca reescribe
+   * `conteoFisico` con un valor leído de antemano (mismo lost update que
+   * `incrementarConteo` evita, pero acá la salida segura es simplemente "no
+   * tocar el número" en vez de sumarlo).
+   */
+  marcarUnidadAmbigua(
+    input: MarcarUnidadAmbiguaInput,
+  ): Promise<ItemInventario> {
+    return this.prisma.itemInventario.upsert({
+      where: {
+        inventarioId_articuloId: {
+          inventarioId: input.inventarioId,
+          articuloId: input.articuloId,
+        },
+      },
+      update: { esAnomalia: true },
+      create: {
+        inventarioId: input.inventarioId,
+        articuloId: input.articuloId,
+        teorico: input.teoricoInicial,
+        conteoFisico: input.cantidadDictada,
+        unidadUsada: input.unidadDictada,
+        esAnomalia: true,
+      },
     });
   }
 
