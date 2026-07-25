@@ -1,7 +1,10 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { JwtStrategy } from './jwt.strategy';
 import type { AuthService } from './auth.service';
-import type { AuthenticatedUser, JwtPayload } from './interfaces/jwt-payload.interface';
+import type {
+  AuthenticatedUser,
+  JwtPayload,
+} from './interfaces/jwt-payload.interface';
 import { RolUsuario } from '../../generated/prisma/client';
 
 describe('JwtStrategy', () => {
@@ -24,7 +27,11 @@ describe('JwtStrategy', () => {
     nombre: 'Op',
     rol: RolUsuario.OPERARIO,
   };
-  const payload: JwtPayload = { sub: 'u1', email: 'op@demo.com', rol: RolUsuario.OPERARIO };
+  const payload: JwtPayload = {
+    sub: 'u1',
+    email: 'op@demo.com',
+    rol: RolUsuario.OPERARIO,
+  };
 
   function buildStrategy(validateUserById: jest.Mock) {
     const authService = { validateUserById } as unknown as AuthService;

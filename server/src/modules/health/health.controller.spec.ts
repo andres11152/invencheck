@@ -9,7 +9,9 @@ describe('HealthController.check', () => {
   }
 
   it('devuelve status ok cuando la base de datos responde', async () => {
-    const controller = buildController(jest.fn().mockResolvedValue([{ '?column?': 1 }]));
+    const controller = buildController(
+      jest.fn().mockResolvedValue([{ '?column?': 1 }]),
+    );
 
     const result = await controller.check();
 
@@ -18,7 +20,9 @@ describe('HealthController.check', () => {
   });
 
   it('lanza 503 si la base de datos no responde', async () => {
-    const controller = buildController(jest.fn().mockRejectedValue(new Error('conexión caída')));
+    const controller = buildController(
+      jest.fn().mockRejectedValue(new Error('conexión caída')),
+    );
 
     await expect(controller.check()).rejects.toBeInstanceOf(
       ServiceUnavailableException,

@@ -4,5 +4,8 @@ node_modules
 
 /src/generated/prisma
 
+# Reporte generado por `test:cov` — se regenera en cada corrida, no aporta versionado.
+/coverage
+
 # Datos reales de negocio (Colsubsidio) usados para la ingesta masiva.
 /data

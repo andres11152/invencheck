@@ -1,10 +1,15 @@
 import { NotFoundException } from '@nestjs/common';
 import { ReporteService } from './reporte.service';
-import type { ReporteRepository, VariacionArticuloRow } from './reporte.repository';
+import type {
+  ReporteRepository,
+  VariacionArticuloRow,
+} from './reporte.repository';
 import type { AlmacenRepository } from '../almacenes/almacen.repository';
 import { UnidadMedida } from '../../generated/prisma/client';
 
-function buildFila(overrides: Partial<VariacionArticuloRow> = {}): VariacionArticuloRow {
+function buildFila(
+  overrides: Partial<VariacionArticuloRow> = {},
+): VariacionArticuloRow {
   return {
     articuloId: 'art-1',
     sku: '123',
@@ -28,7 +33,8 @@ describe('ReporteService', () => {
     findById?: jest.Mock;
   }) {
     const reporteRepository = {
-      reporteVariacion: opts.reporteVariacion ?? jest.fn().mockResolvedValue([]),
+      reporteVariacion:
+        opts.reporteVariacion ?? jest.fn().mockResolvedValue([]),
     } as unknown as ReporteRepository;
     const almacenRepository = {
       findById: opts.findById ?? jest.fn().mockResolvedValue({ id: 'alm-1' }),
@@ -38,11 +44,13 @@ describe('ReporteService', () => {
 
   describe('variacion', () => {
     it('lanza 404 si se filtra por un almacenId que no existe', async () => {
-      const service = buildService({ findById: jest.fn().mockResolvedValue(null) });
+      const service = buildService({
+        findById: jest.fn().mockResolvedValue(null),
+      });
 
-      await expect(service.variacion({ almacenId: 'no-existe' })).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.variacion({ almacenId: 'no-existe' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('no consulta el almacén si no se filtra por almacenId', async () => {

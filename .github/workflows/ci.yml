@@ -47,8 +47,8 @@ jobs:
         run: npm run lint -w server
       - name: server — typecheck
         run: npx tsc --noEmit -p server
-      - name: server — unit tests
-        run: npm test -w server
+      - name: server — unit tests (con umbral de cobertura)
+        run: npm run test:cov -w server
       - name: server — build
         run: npm run build -w server
       - name: server — e2e tests
@@ -63,7 +63,7 @@ jobs:
         run: npm run lint -w client
       - name: client — typecheck
         run: npx tsc --noEmit -p client
-      - name: client — test
-        run: npm run test -w client
+      - name: client — test (con umbral de cobertura)
+        run: npm run test:cov -w client
       - name: client — build
         run: npm run build -w client

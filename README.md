@@ -2,7 +2,8 @@
 
 [![CI](https://github.com/andres11152/invencheck/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/andres11152/invencheck/actions/workflows/ci.yml)
 [![server e2e](https://img.shields.io/badge/server%20e2e-21%20tests%20%2F%207%20specs-blue)](server/test)
-[![client tests](https://img.shields.io/badge/client%20tests-19%20tests%20%2F%204%20specs-blue)](client/src)
+[![client tests](https://img.shields.io/badge/client%20tests-21%20tests%20%2F%204%20specs-blue)](client/src)
+[![coverage threshold](https://img.shields.io/badge/coverage%20threshold-enforced%20in%20CI-success)](#tests)
 
 PWA de toma física de inventario por voz para Colsubsidio Hotelería. Reemplaza el conteo manual en papel: el operario dicta lo que cuenta ("quince kilos de papa criolla"), el sistema lo matchea contra el catálogo real en tiempo real, y las anomalías (cantidades implausibles, unidades ambiguas) bloquean la consolidación hasta que alguien las confirma o corrige.
 
@@ -20,7 +21,7 @@ Este proyecto está en estado de **prototipo funcional para demo**, no de despli
 | Manejo centralizado de errores | Implementado |
 | Health check | Implementado |
 | CI (lint + typecheck + tests unitarios + e2e + build, server y client, en cada push/PR) | Implementado |
-| Tests unitarios | Parcial — 34% de cobertura de statements en `server`; en `client`, tests dirigidos a los módulos más críticos (`auth-storage`, `api`, `use-offline-sync`, `AnomaliaModal`), sin medición de cobertura global todavía |
+| Tests unitarios | Parcial, con umbral de cobertura exigido en CI (falla el build si baja) — `server`: ~45% statements; `client`: ~78% statements pero acotado a los 4 módulos más críticos (`auth-storage`, `api`, `use-offline-sync`, `AnomaliaModal`), no a todo `src/` — ver sección Tests |
 | Tests de integración/e2e | Implementado — 7 specs contra Postgres real (auth, matching difuso, concurrencia de conteo, bloqueo por anomalía, autorización por rol, reporte de variación, webhooks ERP) |
 | Contenerización (Dockerfile de `server`/`client`) | No existe — solo hay `docker-compose.yml` para Postgres local |
 | Dependencias con vulnerabilidades conocidas | `exceljs` (server, prod): sin fix limpio upstream — ver limitación #2. `prisma` CLI (server, dev-only): el hallazgo es de una versión más vieja que la ya instalada y de un comando (`prisma dev`) que este proyecto no usa. `next`/`postcss` (client): pendiente, requiere migración mayor — ver limitación #2 |
@@ -137,7 +138,7 @@ npm run lint                # eslint --fix
 npx tsc --noEmit             # typecheck (sin script npm dedicado, se invoca directo)
 npm test                     # jest, unitarios
 npx jest <nombre>.spec.ts    # un solo archivo de test
-npm run test:cov             # con reporte de cobertura
+npm run test:cov             # con reporte de cobertura + umbral (el que corre CI)
 npm run test:e2e             # 7 specs e2e contra Postgres real — ver sección Tests para el setup de `.env.test`
 npm run build                # nest build
 ```
@@ -149,6 +150,7 @@ npm run lint       # next lint
 npx tsc --noEmit    # typecheck
 npm run test        # vitest run — unitarios/componente
 npm run test:watch  # vitest en modo watch
+npm run test:cov    # con reporte de cobertura + umbral (el que corre CI)
 npm run build       # next build
 ```
 
@@ -156,13 +158,15 @@ npm run build       # next build
 
 ## CI
 
-`.github/workflows/ci.yml` corre en cada push a `master` y en cada pull request: instala las 3 workspaces, build de `shared`, luego lint + typecheck + tests unitarios + build de `server`, luego los tests e2e de `server` contra un contenedor de Postgres levantado como `services` del job, y finalmente lint + typecheck + tests + build de `client`.
+`.github/workflows/ci.yml` corre en cada push a `master` y en cada pull request: instala las 3 workspaces, build de `shared`, luego lint + typecheck + tests unitarios (con umbral de cobertura, `test:cov`) + build de `server`, luego los tests e2e de `server` contra un contenedor de Postgres levantado como `services` del job, y finalmente lint + typecheck + tests (también con umbral, `test:cov`) + build de `client`. Si la cobertura de cualquiera de los dos paquetes cae por debajo del umbral fijado, el build falla — ver detalle de los umbrales en la sección Tests.
 
 ## Tests
 
 ### Server — unitarios
 
-Cobertura actual (`npm run test:cov`): ~34% de statements. Módulos con cobertura real: detección de anomalías, parser de voz local, matching difuso de artículos (a nivel de servicio, mockeando el repositorio), guards de auth/roles, filtro global de excepciones, y los controllers principales de inventario/auth verificando específicamente que `usuarioId` se derive del JWT y nunca del body.
+Cobertura actual (`npm run test:cov`): ~45% de statements (~45% líneas, ~44% branches, ~27% funciones), excluyendo del cálculo el cliente Prisma generado, los `*.module.ts` (wiring de Nest sin lógica) y `main.ts`. Módulos con cobertura real: detección de anomalías, parser de voz local, matching difuso de artículos (a nivel de servicio, mockeando el repositorio), guards de auth/roles/API-key, `JwtStrategy`, `HealthController`, `AlmacenService`, `ReporteService` (incluyendo el escape de CSV), `InventarioService.cambiarEstado` (bloqueo por alertas y estados inmutables), filtro global de excepciones, y los controllers principales de inventario/auth verificando específicamente que `usuarioId` se derive del JWT y nunca del body.
+
+**Umbral fijado en CI** (`jest.coverageThreshold` en `server/package.json`, aplicado con `npm run test:cov`): 43% statements / 41% branches / 25% funciones / 42% líneas — un poco por debajo de lo ya logrado, a propósito: deja margen para fluctuaciones normales, pero una regresión real (borrar tests, agregar código sin probar) rompe el build. Deliberadamente no es 100%: perseguir cobertura total en getters/DTOs/wiring de Nest no protege nada real, solo infla el número: mejor un umbral más bajo pero exigido de verdad, sobre la lógica que sí importa.
 
 ### Server — e2e (`server/test/*.e2e-spec.ts`)
 
@@ -182,12 +186,14 @@ Sin cubrir todavía: la llamada saliente real de `IntegrationErpService.enviarIn
 
 ### Client
 
-Vitest + Testing Library, 19 tests en 4 archivos — sin medición de cobertura global todavía:
+Vitest + Testing Library, 21 tests en 4 archivos:
 
 - `lib/auth-storage.test.ts` — sesión en `localStorage`, incluyendo JSON corrupto.
-- `lib/api.test.ts` — el wrapper `request<T>`: header `Authorization`, `ApiError` en fallo de red (status 0) vs. respuesta no-2xx, y el guard que evita redirigir a `/login` cuando el 401 viene del propio login.
+- `lib/api.test.ts` — el wrapper `request<T>`: header `Authorization`, `ApiError` en fallo de red (status 0) vs. respuesta no-2xx, el guard que evita redirigir a `/login` cuando el 401 viene del propio login, y la construcción de query string de `getReporteVariacion`.
 - `hooks/use-offline-sync.test.ts` — reintento automático de pendientes con `intentos === 0`, no-reintento de los que ya fallaron salvo `incluirFallidos`, y sync inmediato al recuperar conexión.
 - `components/anomalia-modal.test.tsx` — primer test de componente: `navigator.vibrate` (con guard porque jsdom no la implementa), texto condicional de promedio histórico, callbacks de confirmar/re-dictar.
+
+**Umbral fijado en CI** (`test.coverage` en `client/vitest.config.ts`, aplicado con `npm run test:cov`): 73% statements / 60% branches / 52% funciones / 78% líneas, pero **acotado a los 4 archivos de arriba** (`coverage.include`), no a todo `client/src/`. Incluir el resto del código (páginas, componentes, hooks sin test) hoy solo diluiría el número sin proteger nada — es más honesto un umbral alto sobre lo que sí se probó que uno bajo y vago sobre todo el proyecto. Ampliar `include` es el paso natural cada vez que se agregue un test nuevo.
 
 Sin cubrir todavía: `inventario/[id]/page.tsx` (la pantalla compuesta de conteo) y el resto de componentes/hooks — se dejó fuera deliberadamente de esta ronda, pendiente de una capa de mocking de `fetch` más amplia (tipo MSW) antes de abordarla.
 

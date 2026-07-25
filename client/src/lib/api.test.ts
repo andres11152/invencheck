@@ -98,3 +98,35 @@ describe("api.request (vía api.getAlmacenes)", () => {
     expect(authStorage.getToken()).toBe("un-jwt");
   });
 });
+
+describe("api.getReporteVariacion", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("no agrega query string si no se pasa ningún filtro", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse([]));
+
+    await api.getReporteVariacion({});
+
+    const [url] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toMatch(/\/reportes\/variacion$/);
+  });
+
+  it("arma la query string solo con los filtros presentes", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse([]));
+
+    await api.getReporteVariacion({ almacenId: "alm-1", desde: "2026-01-01" });
+
+    const [url] = vi.mocked(fetch).mock.calls[0];
+    const query = new URL(url as string).searchParams;
+    expect(query.get("almacenId")).toBe("alm-1");
+    expect(query.get("desde")).toBe("2026-01-01");
+    expect(query.has("hasta")).toBe(false);
+  });
+});

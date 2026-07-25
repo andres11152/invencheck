@@ -1,7 +1,9 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { ApiKeyGuard } from './api-key.guard';
 
-function buildContext(headers: Record<string, string | undefined>): ExecutionContext {
+function buildContext(
+  headers: Record<string, string | undefined>,
+): ExecutionContext {
   return {
     switchToHttp: () => ({
       getRequest: () => ({ headers }),
@@ -20,16 +22,18 @@ describe('ApiKeyGuard', () => {
     delete process.env.ERP_WEBHOOK_API_KEY;
     const guard = new ApiKeyGuard();
 
-    expect(() => guard.canActivate(buildContext({ 'x-api-key': 'cualquiera' }))).toThrow(
-      UnauthorizedException,
-    );
+    expect(() =>
+      guard.canActivate(buildContext({ 'x-api-key': 'cualquiera' })),
+    ).toThrow(UnauthorizedException);
   });
 
   it('rechaza si falta el header X-Api-Key', () => {
     process.env.ERP_WEBHOOK_API_KEY = 'la-key-correcta';
     const guard = new ApiKeyGuard();
 
-    expect(() => guard.canActivate(buildContext({}))).toThrow(UnauthorizedException);
+    expect(() => guard.canActivate(buildContext({}))).toThrow(
+      UnauthorizedException,
+    );
   });
 
   it('rechaza si la key no coincide', () => {
