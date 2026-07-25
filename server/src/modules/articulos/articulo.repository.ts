@@ -160,7 +160,7 @@ export class ArticuloRepository {
       }
     }
 
-    await this.prisma.$transaction(ops);
+    await this.prisma.$transaction(ops, { timeout: 120000 });
     return rows.length;
   }
 }

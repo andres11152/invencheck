@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -13,6 +13,20 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: invencheck
+          POSTGRES_PASSWORD: invencheck
+          POSTGRES_DB: invencheck_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -37,10 +51,19 @@ jobs:
         run: npm test -w server
       - name: server — build
         run: npm run build -w server
+      - name: server — e2e tests
+        run: npm run test:e2e -w server
+        env:
+          DATABASE_URL: postgresql://invencheck:invencheck@localhost:5432/invencheck_test?schema=public
+          JWT_SECRET: ci-test-secret-not-for-real-use
+          JWT_EXPIRES_IN_SECONDS: 43200
+          ERP_WEBHOOK_API_KEY: ci-test-erp-key
 
       - name: client — lint
         run: npm run lint -w client
       - name: client — typecheck
         run: npx tsc --noEmit -p client
+      - name: client — test
+        run: npm run test -w client
       - name: client — build
         run: npm run build -w client

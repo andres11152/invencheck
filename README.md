@@ -1,5 +1,9 @@
 # InvenCheck
 
+[![CI](https://github.com/andres11152/invencheck/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/andres11152/invencheck/actions/workflows/ci.yml)
+[![server e2e](https://img.shields.io/badge/server%20e2e-21%20tests%20%2F%207%20specs-blue)](server/test)
+[![client tests](https://img.shields.io/badge/client%20tests-19%20tests%20%2F%204%20specs-blue)](client/src)
+
 PWA de toma física de inventario por voz para Colsubsidio Hotelería. Reemplaza el conteo manual en papel: el operario dicta lo que cuenta ("quince kilos de papa criolla"), el sistema lo matchea contra el catálogo real en tiempo real, y las anomalías (cantidades implausibles, unidades ambiguas) bloquean la consolidación hasta que alguien las confirma o corrige.
 
 Desarrollado para el reto Colsubsidio 30X ("Reto Hotelería"). El alcance está delimitado por el brief del reto: capacidad de captura por voz, matching de catálogo, detección de anomalías y reportes de variación física vs. histórico. Funcionalidad de recetas/pedidos/producción fue evaluada, implementada y luego removida deliberadamente al confirmarse con los organizadores que quedaba fuera del alcance evaluado — ver `git log` para el historial de esa decisión.
@@ -15,11 +19,11 @@ Este proyecto está en estado de **prototipo funcional para demo**, no de despli
 | Rate limiting (login y global) | Implementado |
 | Manejo centralizado de errores | Implementado |
 | Health check | Implementado |
-| CI (lint + typecheck + test + build en cada push/PR) | Implementado |
-| Tests unitarios | Parcial — 34% de cobertura de statements en `server`, 0% en `client` |
-| Tests de integración/e2e | No existen |
+| CI (lint + typecheck + tests unitarios + e2e + build, server y client, en cada push/PR) | Implementado |
+| Tests unitarios | Parcial — 34% de cobertura de statements en `server`; en `client`, tests dirigidos a los módulos más críticos (`auth-storage`, `api`, `use-offline-sync`, `AnomaliaModal`), sin medición de cobertura global todavía |
+| Tests de integración/e2e | Implementado — 7 specs contra Postgres real (auth, matching difuso, concurrencia de conteo, bloqueo por anomalía, autorización por rol, reporte de variación, webhooks ERP) |
 | Contenerización (Dockerfile de `server`/`client`) | No existe — solo hay `docker-compose.yml` para Postgres local |
-| Dependencias con vulnerabilidades conocidas | Sí — ver `npm audit` en `server` y `client` |
+| Dependencias con vulnerabilidades conocidas | `exceljs` (server, prod): sin fix limpio upstream — ver limitación #2. `prisma` CLI (server, dev-only): el hallazgo es de una versión más vieja que la ya instalada y de un comando (`prisma dev`) que este proyecto no usa. `next`/`postcss` (client): pendiente, requiere migración mayor — ver limitación #2 |
 | Observabilidad (logging estructurado, APM, métricas) | No existe — solo `Logger` de Nest a stdout |
 | Gestión de secretos | Variables de entorno planas (`.env`), sin vault |
 
@@ -134,29 +138,58 @@ npx tsc --noEmit             # typecheck (sin script npm dedicado, se invoca dir
 npm test                     # jest, unitarios
 npx jest <nombre>.spec.ts    # un solo archivo de test
 npm run test:cov             # con reporte de cobertura
-npm run test:e2e             # configurado, pero sin specs *.e2e-spec.ts todavía
+npm run test:e2e             # 7 specs e2e contra Postgres real — ver sección Tests para el setup de `.env.test`
 npm run build                # nest build
 ```
 
 **Client:**
 
 ```bash
-npm run lint     # next lint
-npx tsc --noEmit  # typecheck
-npm run build     # next build
+npm run lint       # next lint
+npx tsc --noEmit    # typecheck
+npm run test        # vitest run — unitarios/componente
+npm run test:watch  # vitest en modo watch
+npm run build       # next build
 ```
 
 **Shared:** `npm run build` (tsc).
 
 ## CI
 
-`.github/workflows/ci.yml` corre en cada push a `main` y en cada pull request: instala las 3 workspaces, build de `shared`, luego lint + typecheck + test + build de `server`, luego lint + typecheck + build de `client`. No requiere Postgres ni variables de entorno — los tests actuales son unitarios puros, sin dependencia de base de datos real.
+`.github/workflows/ci.yml` corre en cada push a `master` y en cada pull request: instala las 3 workspaces, build de `shared`, luego lint + typecheck + tests unitarios + build de `server`, luego los tests e2e de `server` contra un contenedor de Postgres levantado como `services` del job, y finalmente lint + typecheck + tests + build de `client`.
 
 ## Tests
 
-Cobertura actual en `server` (`npm run test:cov`): ~34% de statements. Módulos con cobertura real: detección de anomalías, parser de voz local, matching difuso de artículos (a nivel de servicio, mockeando el repositorio), guards de auth/roles, filtro global de excepciones, y los controllers principales de inventario/auth verificando específicamente que `usuarioId` se derive del JWT y nunca del body.
+### Server — unitarios
 
-Sin cobertura todavía: las queries SQL crudas en sí (`articulo.repository.findBestMatches`, agregaciones de `reporte.repository`) — probarlas de verdad requiere Postgres con las extensiones `pg_trgm`/`unaccent` en CI, no mocks; `inventario.repository` (incluyendo la ruta atómica de `increment`); `integration-erp.service`; el módulo `reportes` de punta a punta. `client` no tiene tests.
+Cobertura actual (`npm run test:cov`): ~34% de statements. Módulos con cobertura real: detección de anomalías, parser de voz local, matching difuso de artículos (a nivel de servicio, mockeando el repositorio), guards de auth/roles, filtro global de excepciones, y los controllers principales de inventario/auth verificando específicamente que `usuarioId` se derive del JWT y nunca del body.
+
+### Server — e2e (`server/test/*.e2e-spec.ts`)
+
+7 specs, corren contra Postgres real (no mocks) vía `Test.createTestingModule` + `supertest`, cubriendo lo que los unitarios no pueden probar de verdad:
+
+- `auth.e2e-spec.ts` — login real, smoke test del harness.
+- `articulo-matching.e2e-spec.ts` — `findBestMatches` (trigramas `pg_trgm` + `f_unaccent`), imposible de mockear con sentido.
+- `inventario-concurrency.e2e-spec.ts` — 20 dictados HTTP concurrentes del mismo artículo, verifica que el `increment` atómico no pierde ninguno (lost update).
+- `anomalia-blocking.e2e-spec.ts` — el flujo de negocio central: anomalía sin resolver bloquea `CONCILIADO`, resolverla lo desbloquea.
+- `roles-authorization.e2e-spec.ts` — OPERARIO recibe 403 en cierre/auditoría; AUDITOR/ADMIN pueden.
+- `reporte-variacion.e2e-spec.ts` — agregación SQL cruda de variación contra datos sembrados con valores conocidos.
+- `integration-webhook.e2e-spec.ts` — `ApiKeyGuard` de los webhooks ERP, con y sin key válida.
+
+**Setup local:** requiere una base `invencheck_test` en el mismo Postgres de `docker compose` (`CREATE DATABASE invencheck_test;`) y un `server/.env.test` (gitignored) con `DATABASE_URL` apuntando a esa base más `JWT_SECRET`/`ERP_WEBHOOK_API_KEY` fijos de prueba — `GEMINI_API_KEY` se deja vacío a propósito para forzar el parser de voz local. `npm run test:e2e` aplica las migraciones automáticamente (`pretest:e2e`) antes de correr. En CI no hace falta `.env.test`: las mismas variables se inyectan como env del job contra el Postgres de `services`.
+
+Sin cubrir todavía: la llamada saliente real de `IntegrationErpService.enviarInventarioAERP` al ERP (transición a `ENVIADO_ERP`), y el flujo completo de auditoría ciega más allá de la autorización por rol (`compararAuditoria`).
+
+### Client
+
+Vitest + Testing Library, 19 tests en 4 archivos — sin medición de cobertura global todavía:
+
+- `lib/auth-storage.test.ts` — sesión en `localStorage`, incluyendo JSON corrupto.
+- `lib/api.test.ts` — el wrapper `request<T>`: header `Authorization`, `ApiError` en fallo de red (status 0) vs. respuesta no-2xx, y el guard que evita redirigir a `/login` cuando el 401 viene del propio login.
+- `hooks/use-offline-sync.test.ts` — reintento automático de pendientes con `intentos === 0`, no-reintento de los que ya fallaron salvo `incluirFallidos`, y sync inmediato al recuperar conexión.
+- `components/anomalia-modal.test.tsx` — primer test de componente: `navigator.vibrate` (con guard porque jsdom no la implementa), texto condicional de promedio histórico, callbacks de confirmar/re-dictar.
+
+Sin cubrir todavía: `inventario/[id]/page.tsx` (la pantalla compuesta de conteo) y el resto de componentes/hooks — se dejó fuera deliberadamente de esta ronda, pendiente de una capa de mocking de `fetch` más amplia (tipo MSW) antes de abordarla.
 
 ## Estructura del dominio
 
@@ -177,11 +210,14 @@ Inventario (toma física de un almacén en una fecha de corte)
 En orden aproximado de impacto:
 
 1. Sin Dockerfile para `server`/`client` — no hay forma de construir una imagen desplegable todavía, solo de correr en local.
-2. `npm audit`: vulnerabilidades en dependencias transitivas (`exceljs`/`archiver` en server, Next.js/PostCSS en client). Ninguna es explotable directamente en el flujo actual de la app, pero deben resolverse antes de cualquier despliegue real.
-3. Sin tests de integración contra Postgres real (fuzzy matching, agregaciones de reportes, race conditions).
-4. Sin observabilidad: logs solo van a stdout, sin agregador ni APM. Un incidente en producción hoy solo se diagnostica con acceso directo al proceso.
-5. Rate limiting en memoria del proceso: válido para una sola instancia; escalar horizontalmente requeriría un storage compartido (Redis) para el throttler.
-6. Cliente sin tests automatizados de ningún tipo.
+2. `npm audit` — desglosado por paquete, ninguno tiene un fix trivial disponible hoy:
+   - `exceljs` (`^4.4.0`, dependency de producción): marcado alto vía `archiver`/`uuid` transitivos, pero el rango marcado es `>=3.5.0` — no existe ninguna versión ≥3.5.0 sin el hallazgo; la única "fix" que ofrece `npm audit fix --force` es bajar a 3.4.0 (breaking, más vieja, sin garantía de estar mejor). `server/src/scripts/import-excel.ts` solo lee archivos (`readFile`/`getWorksheet`/`eachRow`/`getCell().value`), nunca escribe — la ruta de `archiver` (creación de zip), que es donde vive la vulnerabilidad, nunca se ejecuta en este código. Riesgo real: prácticamente nulo, sin fix limpio disponible upstream todavía.
+   - `prisma` (CLI, devDependency, `^7.9.0`): el hallazgo (`@prisma/dev`→`find-my-way`) es del comando `prisma dev` (levanta un servidor local), que este proyecto nunca ejecuta (solo `migrate dev`/`db seed`/`generate` vía npm scripts), y el CLI no se despliega junto al server. `@prisma/client`/`@prisma/adapter-pg`, los paquetes que sí corren en producción, no tienen hallazgos.
+   - `eslint`/`jest`/`ts-jest`/`@nestjs/cli` (devDependencies): las "fix" que sugiere `npm audit` son downgrades mayores (p. ej. jest→19.0.2, eslint→10.8.0) que romperían todo el toolchain de build/test para resolver hallazgos sin superficie de ataque real — nada de input no confiable llega a herramientas de desarrollo.
+   - `next`/`postcss` (client): severidad alta, confirmado, solo se arregla con una migración mayor de Next 14 a 16 — se deja deliberadamente fuera de alcance como un esfuerzo aparte, no algo para meter de paso.
+3. Sin observabilidad: logs solo van a stdout, sin agregador ni APM. Un incidente en producción hoy solo se diagnostica con acceso directo al proceso.
+4. Rate limiting en memoria del proceso: válido para una sola instancia; escalar horizontalmente requeriría un storage compartido (Redis) para el throttler — deliberadamente no implementado todavía, prematuro para un prototipo de una sola instancia.
+5. Tests e2e (server) y de cliente ya existen pero con alcance acotado: falta cubrir la llamada saliente real al ERP y la comparación de auditoría ciega en server; en client falta la pantalla principal de conteo (`inventario/[id]/page.tsx`) y el resto de componentes/hooks — ver sección Tests para el detalle exacto de qué queda fuera.
 
 ## Licencia
 

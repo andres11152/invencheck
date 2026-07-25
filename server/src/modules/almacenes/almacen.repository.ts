@@ -37,7 +37,7 @@ export class AlmacenRepository {
         create: row,
       }),
     );
-    await this.prisma.$transaction(ops);
+    await this.prisma.$transaction(ops, { timeout: 60000 });
     return rows.length;
   }
 }
