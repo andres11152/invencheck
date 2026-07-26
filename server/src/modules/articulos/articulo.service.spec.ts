@@ -19,9 +19,13 @@ function buildArticulo(overrides: Partial<Articulo> = {}): Articulo {
 }
 
 describe('ArticuloService.normalizarEntradaHablada', () => {
-  function buildService(findBestMatches: jest.Mock) {
+  function buildService(
+    findBestMatches: jest.Mock,
+    findByNamePrefix: jest.Mock = jest.fn().mockResolvedValue([]),
+  ) {
     const repository = {
       findBestMatches,
+      findByNamePrefix,
     } as unknown as ArticuloRepository;
     return new ArticuloService(repository);
   }
@@ -145,5 +149,74 @@ describe('ArticuloService.normalizarEntradaHablada', () => {
     const result = await service.normalizarEntradaHablada('papa criolla');
 
     expect(result.articulo).not.toHaveProperty('score');
+  });
+
+  /**
+   * Regresión de un bug real reportado: dictar "arroz" auto-confirmaba
+   * silenciosamente contra el artículo "ARROZ" (bonus de nombre EXACTO en
+   * findBestMatches, score 1.5) aunque el catálogo real tuviera "ARROZ
+   * DOÑA PEPA", "ARROZ BASMATI", etc. — el gap de score no detectaba esto
+   * porque esos nombres más largos diluyen la similitud de trigramas
+   * (score ~0.8), aunque la relación textual ("arroz" es literalmente su
+   * primer token) sea inequívoca. Confirmado con datos reales de
+   * producción vía consulta directa a Postgres antes de corregir.
+   */
+  describe('variantes más específicas de un nombre EXACTO (ej. "arroz" vs "ARROZ DOÑA PEPA")', () => {
+    it('cuando el nombre EXACTO también es prefijo de otras variantes reales, se marca como ambigüedad', async () => {
+      const arroz = buildArticulo({ id: 'art-arroz', nombre: 'ARROZ' });
+      const donaPepa = buildArticulo({
+        id: 'art-dona-pepa',
+        nombre: 'ARROZ DOÑA PEPA',
+      });
+      const basmati = buildArticulo({
+        id: 'art-basmati',
+        nombre: 'ARROZ BASMATI',
+      });
+      // Solo 1 candidato por findBestMatches — el gap de score por sí solo
+      // NO detectaría ambigüedad acá (no hay "segundo" ni siquiera).
+      const findBestMatches = jest
+        .fn()
+        .mockResolvedValue([{ ...arroz, score: 1.5 }]);
+      const findByNamePrefix = jest.fn().mockResolvedValue([donaPepa, basmati]);
+      const service = buildService(findBestMatches, findByNamePrefix);
+
+      const result = await service.normalizarEntradaHablada('arroz');
+
+      expect(result.articulo).toBeNull();
+      expect(result.candidatosAmbiguos?.map((a) => a.id)).toEqual([
+        'art-arroz',
+        'art-dona-pepa',
+        'art-basmati',
+      ]);
+      expect(findByNamePrefix).toHaveBeenCalledWith('arroz', 'art-arroz');
+    });
+
+    it('no consulta variantes de prefijo si el top NO es un nombre exacto (evita una consulta extra innecesaria)', async () => {
+      const findBestMatches = jest
+        .fn()
+        .mockResolvedValue([
+          { ...buildArticulo({ nombre: 'ARROZ DOÑA PEPA' }), score: 0.9 },
+        ]);
+      const findByNamePrefix = jest.fn().mockResolvedValue([]);
+      const service = buildService(findBestMatches, findByNamePrefix);
+
+      await service.normalizarEntradaHablada('arroz dona');
+
+      expect(findByNamePrefix).not.toHaveBeenCalled();
+    });
+
+    it('nombre exacto sin ninguna variante más específica: no hay ambigüedad (comportamiento normal)', async () => {
+      const sal = buildArticulo({ id: 'art-sal', nombre: 'SAL' });
+      const findBestMatches = jest
+        .fn()
+        .mockResolvedValue([{ ...sal, score: 1.5 }]);
+      const findByNamePrefix = jest.fn().mockResolvedValue([]);
+      const service = buildService(findBestMatches, findByNamePrefix);
+
+      const result = await service.normalizarEntradaHablada('sal');
+
+      expect(result.articulo).toEqual(sal);
+      expect(result.candidatosAmbiguos).toBeUndefined();
+    });
   });
 });

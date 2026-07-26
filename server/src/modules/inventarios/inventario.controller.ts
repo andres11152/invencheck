@@ -4,6 +4,7 @@ import { CrearInventarioDto } from './dto/crear-inventario.dto';
 import { ProcesarVozDto } from './dto/procesar-voz.dto';
 import { ProcesarSkuDto } from './dto/procesar-sku.dto';
 import { ProcesarArticuloDto } from './dto/procesar-articulo.dto';
+import { DeshacerConteoDto } from './dto/deshacer-conteo.dto';
 import { CambiarEstadoDto } from './dto/cambiar-estado.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -60,6 +61,24 @@ export class InventarioController {
       dto.articuloId,
       dto.cantidad,
       dto.unidadDictada ?? UnidadMedida.UNIDAD,
+    );
+  }
+
+  // "Re-dictar / Corregir" en el modal de anomalía: deshace la última
+  // cantidad dictada para este artículo (en vez de acumularla, que es lo
+  // que procesar-voz/procesar-sku SÍ deben hacer siempre) — ver el
+  // comentario en InventarioService.deshacerUltimoConteo.
+  @Patch(':id/articulos/:articuloId/deshacer-conteo')
+  deshacerConteo(
+    @Param('id') id: string,
+    @Param('articuloId') articuloId: string,
+    @Body() dto: DeshacerConteoDto,
+  ) {
+    return this.inventarioService.deshacerUltimoConteo(
+      id,
+      articuloId,
+      dto.cantidadDictada,
+      dto.unidadDictada,
     );
   }
 

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ArticuloRepository } from './articulo.repository';
 import { normalizeSpokenText } from './articulo-text.util';
+import { stripAccents } from '../../common/utils/text.util';
 import { FindArticulosQueryDto } from './dto/find-articulos-query.dto';
 import type { Articulo } from '../../generated/prisma/client';
 
@@ -95,20 +96,50 @@ export class ArticuloService {
       return { textoNormalizado, articulo: null, score: top?.score ?? 0 };
     }
 
-    if (
+    const ambiguosPorScore =
       segundo &&
       segundo.score >= VOICE_MATCH_MIN_SCORE &&
       top.score - segundo.score < AMBIGUEDAD_GAP
-    ) {
-      const candidatosAmbiguos = candidatos
-        .filter((c) => top.score - c.score < AMBIGUEDAD_GAP)
+        ? candidatos.filter((c) => top.score - c.score < AMBIGUEDAD_GAP)
+        : [];
+
+    // Un nombre EXACTO (el bonus +0.5 de findBestMatches) puede ganar por
+    // mucho margen de score incluso cuando el catálogo tiene variantes más
+    // específicas cuyo nombre empieza igual — caso real: "arroz" gana con
+    // score 1.5 sobre "ARROZ DOÑA PEPA"/"ARROZ BASMATI" (~0.8) aunque ambas
+    // son igual de reales, solo que su similitud de trigramas baja al ser
+    // nombres más largos. El gap de score no detecta esto, así que se
+    // busca aparte, solo cuando el bonus de exactitud es lo que ganó.
+    const esNombreExacto =
+      stripAccents(top.nombre).toLowerCase() === textoNormalizado;
+    const variantesMasEspecificas = esNombreExacto
+      ? await this.articuloRepository.findByNamePrefix(textoNormalizado, top.id)
+      : [];
+
+    if (ambiguosPorScore.length > 0 || variantesMasEspecificas.length > 0) {
+      const candidatosAmbiguos = new Map<string, Articulo>();
+      // El top va primero siempre — Map conserva el orden de la PRIMERA
+      // vez que se inserta cada clave, así que insertarlo antes garantiza
+      // que encabece la lista sin importar cuál de las dos ramas disparó
+      // la ambigüedad.
+      {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        .map(({ score, ...articulo }) => articulo);
+        const { score, ...articulo } = top;
+        candidatosAmbiguos.set(articulo.id, articulo);
+      }
+      for (const c of ambiguosPorScore) {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { score, ...articulo } = c;
+        candidatosAmbiguos.set(articulo.id, articulo);
+      }
+      for (const articulo of variantesMasEspecificas) {
+        candidatosAmbiguos.set(articulo.id, articulo);
+      }
       return {
         textoNormalizado,
         articulo: null,
         score: top.score,
-        candidatosAmbiguos,
+        candidatosAmbiguos: [...candidatosAmbiguos.values()],
       };
     }
 

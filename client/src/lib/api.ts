@@ -151,6 +151,21 @@ export const api = {
       body: JSON.stringify({ estado }),
     }),
 
+  // "Re-dictar / Corregir" en el modal de anomalía: deshace la última
+  // cantidad dictada para este artículo (resta el delta, no lo vuelve a
+  // sumar) antes de dejar que el operario dicte de nuevo — si no, cada
+  // "corrección" quedaba acumulada sobre el conteo erróneo anterior en vez
+  // de reemplazarlo.
+  deshacerConteo: (
+    id: string,
+    articuloId: string,
+    data: { cantidadDictada: number; unidadDictada: UnidadMedida },
+  ) =>
+    request<ProcesarTomaPorVozResult>(
+      `/inventarios/${id}/articulos/${articuloId}/deshacer-conteo`,
+      { method: "PATCH", body: JSON.stringify(data) },
+    ),
+
   resolverAlerta: (inventarioId: string, alertaId: string) =>
     request<AlertaInventario>(`/inventarios/${inventarioId}/alertas/${alertaId}/resolver`, {
       method: "PATCH",

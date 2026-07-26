@@ -442,6 +442,73 @@ export class InventarioService {
     };
   }
 
+  /**
+   * Deshace la ÚLTIMA cantidad dictada para un artículo en este inventario
+   * — usado por "Re-dictar / Corregir" en el modal de anomalía. El
+   * comportamiento normal de `procesarTomaPorVoz` (acumular sobre el
+   * conteo previo, ver el comentario en `escribirLineaArticulo`) es
+   * correcto para el caso feliz — contar el mismo artículo en dos estantes
+   * distintos — pero es exactamente lo opuesto de lo que hace falta acá:
+   * el operario dictó mal un número y quiere reemplazarlo, no sumarle un
+   * segundo conteo encima. Sin este método, cada "corrección" quedaba
+   * apilada sobre el conteo anterior en vez de reemplazarlo — bug real
+   * reportado, confirmado en capturas de producción (el total mostrado en
+   * el modal seguía creciendo con cada intento de "corregir").
+   */
+  async deshacerUltimoConteo(
+    inventarioId: string,
+    articuloId: string,
+    cantidadDictada: number,
+    unidadDictada: UnidadMedida,
+  ): Promise<ProcesarTomaPorVozResult> {
+    const inventario = await this.validarInventarioEditable(inventarioId);
+    const item = await this.inventarioRepository.findItem(
+      inventarioId,
+      articuloId,
+    );
+    if (!item) {
+      throw new NotFoundException(
+        `El artículo ${articuloId} no tiene ningún conteo en el inventario ${inventarioId}`,
+      );
+    }
+    const articulo = await this.articuloService.findById(articuloId);
+
+    const factor =
+      unidadDictada === articulo.unidadEstd
+        ? 1
+        : factorConversion(unidadDictada, articulo.unidadEstd);
+    // Si la unidad dictada nunca se pudo convertir (rama UNIDAD_AMBIGUA de
+    // escribirLineaArticulo), esa línea nunca sumó nada a `conteoFisico`
+    // (ver el comentario en InventarioRepository.marcarUnidadAmbigua) — no
+    // hay ningún delta numérico que deshacer, solo se re-evalúa el estado
+    // actual del ítem.
+    const delta = factor === undefined ? 0 : -round2(cantidadDictada * factor);
+
+    const itemResumen = await this.inventarioRepository.ejecutarEnTransaccion(
+      (tx) =>
+        this.aplicarDeltaYEvaluar(
+          {
+            inventarioId,
+            almacenId: inventario.almacenId,
+            articulo,
+            articuloBusqueda: articulo.nombre,
+            cantidadDictada,
+            unidadDictada,
+            scoreMatch: 1,
+          },
+          delta,
+          tx,
+        ),
+    );
+
+    return {
+      inventario: await this.findDetalle(inventarioId),
+      fuenteIA: 'SELECCION_MANUAL',
+      itemsMatcheados: [itemResumen],
+      itemsNoMatcheados: [],
+    };
+  }
+
   private async validarInventarioEditable(
     inventarioId: string,
   ): Promise<Inventario> {
@@ -504,13 +571,7 @@ export class InventarioService {
     },
     tx: Prisma.TransactionClient,
   ): Promise<ItemProcesadoResumen> {
-    const {
-      inventarioId,
-      almacenId,
-      articulo,
-      cantidadDictada,
-      unidadDictada,
-    } = params;
+    const { inventarioId, articulo, cantidadDictada, unidadDictada } = params;
 
     // El ítem puede ya haber sido contado antes en esta misma toma (ej. en
     // otro estante) — la nueva cantidad dictada se ACUMULA a la previa en
@@ -565,6 +626,39 @@ export class InventarioService {
     }
 
     const delta = round2(cantidadDictada * factor);
+    return this.aplicarDeltaYEvaluar(params, delta, tx);
+  }
+
+  /**
+   * Aplica un delta YA CONVERTIDO a `articulo.unidadEstd` sobre el conteo
+   * acumulado (incremento normal desde `escribirLineaArticulo`, o un
+   * decremento desde `deshacerUltimoConteo`), re-evalúa anomalías contra
+   * el histórico y persiste las alertas que correspondan. Extraído de
+   * `escribirLineaArticulo` porque ambos flujos necesitan exactamente la
+   * misma secuencia después de decidir el delta — la única diferencia
+   * entre "contar" y "deshacer" es el signo de ese número.
+   */
+  private async aplicarDeltaYEvaluar(
+    params: {
+      inventarioId: string;
+      almacenId: string;
+      articulo: Articulo;
+      articuloBusqueda: string;
+      cantidadDictada: number;
+      unidadDictada: UnidadMedida;
+      scoreMatch: number;
+    },
+    delta: number,
+    tx: Prisma.TransactionClient,
+  ): Promise<ItemProcesadoResumen> {
+    const {
+      inventarioId,
+      almacenId,
+      articulo,
+      cantidadDictada,
+      unidadDictada,
+    } = params;
+
     const itemInventario = await this.inventarioRepository.incrementarConteo(
       {
         inventarioId,

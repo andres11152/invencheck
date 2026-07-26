@@ -71,3 +71,5 @@ export function calcularVariacionPct(conteoFisico: number, promedio: number | nu
   if (promedio === null || promedio <= 0) return null;
   return Math.round(((conteoFisico - promedio) / promedio) * 100);
 }
+
+

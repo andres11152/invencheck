@@ -30,11 +30,14 @@ export function useOfflineSync(
   inventarioId: string,
   onSincronizado: (resultado: ProcesarTomaPorVozResult, texto: string) => void,
 ) {
-  const [isOnline, setIsOnline] = useState(true);
+  const [isOnlineState, setIsOnlineState] = useState(true);
+  const [modoBodegaSimulado, setModoBodegaSimulado] = useState(false);
   const [pendientes, setPendientes] = useState<DictadoPendiente[]>([]);
   const [sincronizando, setSincronizando] = useState(false);
   const sincronizandoRef = useRef(false);
   const onSincronizadoRef = useRef(onSincronizado);
+
+  const effectiveOnline = isOnlineState && !modoBodegaSimulado;
 
   useEffect(() => {
     onSincronizadoRef.current = onSincronizado;
@@ -58,7 +61,7 @@ export function useOfflineSync(
         const aProcesar = opts.incluirFallidos ? cola : cola.filter((i) => i.intentos === 0);
 
         for (const item of aProcesar) {
-          if (typeof navigator !== "undefined" && !navigator.onLine) break;
+          if (typeof navigator !== "undefined" && (!navigator.onLine || modoBodegaSimulado)) break;
           try {
             const resultado = await api.procesarVoz(item.inventarioId, item.texto);
             if (item.id !== undefined) await eliminarPendiente(item.id);
@@ -81,8 +84,19 @@ export function useOfflineSync(
         await refrescarPendientes();
       }
     },
-    [inventarioId, refrescarPendientes],
+    [inventarioId, modoBodegaSimulado, refrescarPendientes],
   );
+
+  const toggleModoBodega = useCallback(() => {
+    setModoBodegaSimulado((prev) => {
+      const next = !prev;
+      if (!next && navigator.onLine) {
+        // Al restablecer la señal, sincronizar inmediatamente
+        setTimeout(() => void sincronizar(), 50);
+      }
+      return next;
+    });
+  }, [sincronizar]);
 
   const encolar = useCallback(
     async (texto: string) => {
@@ -101,24 +115,24 @@ export function useOfflineSync(
   );
 
   useEffect(() => {
-    setIsOnline(navigator.onLine);
+    setIsOnlineState(navigator.onLine);
     void refrescarPendientes();
 
     function handleOnline() {
-      setIsOnline(true);
+      setIsOnlineState(true);
       void sincronizar();
     }
     function handleOffline() {
-      setIsOnline(false);
+      setIsOnlineState(false);
     }
 
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
-    if (navigator.onLine) void sincronizar();
+    if (navigator.onLine && !modoBodegaSimulado) void sincronizar();
 
     const interval = setInterval(() => {
-      if (navigator.onLine) void sincronizar();
+      if (navigator.onLine && !modoBodegaSimulado) void sincronizar();
     }, INTERVALO_REINTENTO_MS);
 
     return () => {
@@ -126,7 +140,16 @@ export function useOfflineSync(
       window.removeEventListener("offline", handleOffline);
       clearInterval(interval);
     };
-  }, [refrescarPendientes, sincronizar]);
+  }, [modoBodegaSimulado, refrescarPendientes, sincronizar]);
 
-  return { isOnline, pendientes, sincronizando, encolar, sincronizar, descartar };
+  return {
+    isOnline: effectiveOnline,
+    modoBodegaSimulado,
+    toggleModoBodega,
+    pendientes,
+    sincronizando,
+    encolar,
+    sincronizar,
+    descartar,
+  };
 }

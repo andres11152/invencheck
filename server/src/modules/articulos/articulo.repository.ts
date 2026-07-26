@@ -103,6 +103,36 @@ export class ArticuloRepository {
   }
 
   /**
+   * Otros artículos cuyo nombre es una extensión real del texto dictado
+   * ("arroz" -> "ARROZ DOÑA PEPA", "ARROZ BASMATI", ...). Se consulta aparte
+   * de `findBestMatches` porque el score de similitud de trigramas no
+   * detecta esto de forma confiable: un prefijo corto dentro de un nombre
+   * mucho más largo diluye la similitud (y por lo tanto el gap con el
+   * match exacto), aunque la relación textual — "arroz" es literalmente el
+   * primer token de esos otros nombres — sea inequívoca.
+   *
+   * Límite de 5 OTRAS variantes (sin contar el propio match exacto): el
+   * peor caso real en el catálogo completo (938 artículos, `npm run
+   * audit:voice-matching`) es "ARROZ", con exactamente 5 variantes
+   * ("ARROZ BASMATI/FEDERAL/DOÑA PEPA/PARA SUSHI/BLANCO EXCELSO 500G") —
+   * un límite más bajo (4) alcanzaba a cortar una de ellas.
+   */
+  findByNamePrefix(
+    normalizedPrefix: string,
+    excludeId: string,
+    limit = 5,
+  ): Promise<Articulo[]> {
+    return this.prisma.$queryRaw<Articulo[]>`
+      SELECT a.*
+      FROM articulos a
+      WHERE a.id != ${excludeId}
+        AND public.f_unaccent(lower(a.nombre)) LIKE ${normalizedPrefix + ' %'}
+      ORDER BY length(a.nombre) ASC, a.nombre ASC
+      LIMIT ${limit}
+    `;
+  }
+
+  /**
    * Upsert masivo por `sku` (si existe) o `nombre` (catálogo maestro).
    *
    * Optimizado en 2 fases para eliminar la latencia N+1:

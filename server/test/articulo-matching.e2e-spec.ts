@@ -155,4 +155,77 @@ describe('ArticuloRepository.findBestMatches (e2e)', () => {
     expect(match.articulo?.id).toBe(roja.id);
     expect(match.candidatosAmbiguos).toBeUndefined();
   });
+
+  /**
+   * Regresión de un bug real reportado en producción: dictar "arroz" con el
+   * catálogo real (938 artículos) auto-confirmaba en silencio contra el
+   * artículo "ARROZ" (bonus de nombre EXACTO en findBestMatches, score 1.5)
+   * mientras "ARROZ DOÑA PEPA"/"ARROZ BASMATI" quedaban con score ~0.8 —
+   * gap de 0.7, muy por encima de AMBIGUEDAD_GAP (0.3), así que el chequeo
+   * de gap por sí solo NUNCA detecta este caso. Confirmado con una consulta
+   * directa a Postgres en producción antes de corregir.
+   */
+  it('un nombre EXACTO que también es prefijo de variantes más específicas se marca como ambigüedad (caso real: "arroz", con las 5 variantes reales del catálogo)', async () => {
+    const arroz = await crearArticulo(prisma, {
+      nombre: 'ARROZ',
+      categoria: 'AYB',
+    });
+    await crearArticulo(prisma, {
+      nombre: 'ARROZ DOÑA PEPA',
+      aliases: ['arroz dona pepa', 'arroz pepa'],
+      categoria: 'AYB',
+    });
+    await crearArticulo(prisma, { nombre: 'ARROZ BASMATI', categoria: 'AYB' });
+    await crearArticulo(prisma, { nombre: 'ARROZ FEDERAL', categoria: 'AYB' });
+    await crearArticulo(prisma, {
+      nombre: 'ARROZ PARA SUSHI',
+      categoria: 'AYB',
+    });
+    await crearArticulo(prisma, {
+      nombre: 'ARROZ BLANCO EXCELSO 500G',
+      aliases: ['arroz blanco', 'arroz excelso'],
+      categoria: 'AYB',
+    });
+    // No debe confundirse con productos donde "arroz" no es el primer
+    // token — esos son productos distintos, no variantes de "arroz".
+    await crearArticulo(prisma, {
+      nombre: 'VINAGRE DE ARROZ',
+      categoria: 'AYB',
+      unidadEstd: UnidadMedida.LITRO,
+    });
+
+    // El gap de score real entre "ARROZ" y sus variantes es grande —
+    // confirma que el gap por sí solo no alcanzaría para detectar esto.
+    const [top, segundo] = await repo.findBestMatches('arroz', 3);
+    expect(top.id).toBe(arroz.id);
+    expect(top.score - segundo.score).toBeGreaterThan(0.3);
+
+    const match = await articuloService.normalizarEntradaHablada('arroz');
+
+    expect(match.articulo).toBeNull();
+    // Las 5 variantes reales del catálogo (el peor caso real del catálogo
+    // completo, ver el límite en findByNamePrefix) caben todas — ninguna
+    // se corta.
+    const nombres = match.candidatosAmbiguos?.map((a) => a.nombre).sort();
+    expect(nombres).toEqual([
+      'ARROZ',
+      'ARROZ BASMATI',
+      'ARROZ BLANCO EXCELSO 500G',
+      'ARROZ DOÑA PEPA',
+      'ARROZ FEDERAL',
+      'ARROZ PARA SUSHI',
+    ]);
+  });
+
+  it('un nombre exacto sin ninguna variante más específica en el catálogo no se marca como ambigüedad', async () => {
+    const sal = await crearArticulo(prisma, {
+      nombre: 'SAL',
+      categoria: 'AYB',
+    });
+
+    const match = await articuloService.normalizarEntradaHablada('sal');
+
+    expect(match.articulo?.id).toBe(sal.id);
+    expect(match.candidatosAmbiguos).toBeUndefined();
+  });
 });

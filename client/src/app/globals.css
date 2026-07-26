@@ -210,23 +210,74 @@ body {
     animation: audio-wave 1.2s ease-in-out infinite;
   }
 
-  /* Estilos de Impresión / PDF Directo */
+  /* ─────────────────────────────────────────────────────────────────────────
+     ESTILOS DE IMPRESIÓN / ACTA FORMAL
+     Todo el tema oscuro se reemplaza por tokens claros. Los componentes
+     interactivos se ocultan y solo se muestra el componente PrintActa.
+     ───────────────────────────────────────────────────────────────────────── */
   @media print {
+    /* ── 1. Forzar tokens de color claros para toda la jerarquía ── */
+    :root {
+      --background:         0 0% 100%;
+      --foreground:         0 0% 5%;
+      --card:               0 0% 98%;
+      --card-foreground:    0 0% 5%;
+      --popover:            0 0% 100%;
+      --popover-foreground: 0 0% 5%;
+      --primary:            208 100% 35%;
+      --primary-foreground: 0 0% 100%;
+      --secondary:          49 100% 50%;
+      --secondary-foreground: 208 100% 22%;
+      --muted:              0 0% 96%;
+      --muted-foreground:   0 0% 35%;
+      --accent:             0 0% 96%;
+      --accent-foreground:  0 0% 5%;
+      --destructive:        0 72% 51%;
+      --destructive-foreground: 0 0% 98%;
+      --border:             0 0% 80%;
+      --input:              0 0% 80%;
+      --ring:               208 100% 35%;
+    }
+
+    /* ── 2. Ocultar TODOS los elementos interactivos/no-imprimibles ── */
     header,
     nav,
     button,
-    .no-print {
+    .no-print,
+    [data-no-print] {
       display: none !important;
     }
 
+    /* ── 3. Reset de body para fondo blanco limpio ── */
     body {
       background: white !important;
       color: black !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
 
     main {
       padding: 0 !important;
       max-width: 100% !important;
+    }
+
+    /* ── 4. Reglas de paginación para tablas ── */
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    thead {
+      display: table-header-group;
+    }
+
+    tr {
+      page-break-inside: avoid;
+    }
+
+    /* ── 5. Visibilidad del acta ── */
+    .print-only {
+      display: block !important;
     }
   }
 }

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Mic, Zap } from "lucide-react";
 import { toast } from "sonner";
-import type { EstadoInventario } from "@invencheck/shared";
+import type { EstadoInventario, UnidadMedida } from "@invencheck/shared";
 
 import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -24,6 +24,12 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/components/auth-provider";
+import { PrintActa } from "@/components/print-acta";
+
+interface AnomaliaPendiente {
+  itemId: string;
+  origenDictado?: { cantidadDictada: number; unidadDictada: UnidadMedida };
+}
 
 export function InventarioPageContent({ params }: { params: { id: string } }) {
   const { usuario } = useAuth();
@@ -38,12 +44,15 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
     "GEMINI" | "REGLAS_LOCALES" | "ESCANER_SKU" | "SELECCION_MANUAL" | null
   >(null);
 
-  // Cola de ids de ItemInventario con anomalía pendiente de revisar (por
-  // dictado nuevo o por click manual en una card). Se deriva la entrada
-  // mostrada del `inventario` actual, así que al confirmar/recargar y
-  // desaparecer la anomalía resuelta, automáticamente avanza a la siguiente
-  // de la cola sin lógica adicional.
-  const [anomaliaColaIds, setAnomaliaColaIds] = useState<string[]>([]);
+  // Cola de anomalías pendientes de revisar (por dictado nuevo o por click
+  // manual en una card). Se deriva la entrada mostrada del `inventario`
+  // actual, así que al confirmar/recargar y desaparecer la anomalía
+  // resuelta, automáticamente avanza a la siguiente de la cola sin lógica
+  // adicional. `origenDictado` solo está presente cuando la anomalía viene
+  // de un dictado hecho en ESTA sesión (no de reabrir una card vieja) —
+  // "Re-dictar / Corregir" lo usa para deshacer exactamente ese conteo
+  // antes de dejar redication, en vez de acumular uno encima del otro.
+  const [anomaliaCola, setAnomaliaCola] = useState<AnomaliaPendiente[]>([]);
 
   // Ítems dictados que no se guardaron (sin match o ambiguos entre variantes
   // del catálogo) — nunca llegan a existir como ItemInventario en el
@@ -53,8 +62,8 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
 
   const anomaliaModalEntrada = useMemo(() => {
     if (!inventario) return null;
-    for (const id of anomaliaColaIds) {
-      const item = inventario.items.find((i) => i.id === id);
+    for (const { itemId } of anomaliaCola) {
+      const item = inventario.items.find((i) => i.id === itemId);
       // No se filtra por `item.esAnomalia`: ese campo refleja solo la
       // ÚLTIMA evaluación, y puede quedar en `false` mientras una alerta
       // vieja (de cuando sí aplicaba) sigue activa por algún motivo — lo
@@ -65,12 +74,12 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
       // (resuelto: true) quedan pendientes de revisión por un auditor, pero
       // ya no deben reabrir este modal de auto-chequeo (ver AlertasRevisionAuditor).
       const alertas = inventario.alertas.filter(
-        (a) => a.itemInventarioId === id && !a.resuelto,
+        (a) => a.itemInventarioId === itemId && !a.resuelto,
       );
       if (alertas.length > 0) return { item, alertas };
     }
     return null;
-  }, [inventario, anomaliaColaIds]);
+  }, [inventario, anomaliaCola]);
 
   // Ids de ItemInventario que acaban de aparecer por el último dictado
   // procesado: solo estos reciben la animación de entrada.
@@ -146,16 +155,28 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
     // Si la captura trajo una o más anomalías, encolamos TODOS los ítems
     // anómalos de esta captura (no solo el primero) para que el modal los
     // vaya mostrando uno tras otro al confirmar/redictar cada uno.
-    const idsAnomalos = resultado.itemsMatcheados
+    // `origenDictado` guarda la cantidad/unidad EXACTA que se acaba de
+    // dictar — "Re-dictar / Corregir" la necesita para deshacer justo ese
+    // conteo antes de dejar redication (ver handleRedictarAnomalia).
+    const anomalosDeEstaCaptura = resultado.itemsMatcheados
       .filter((i) => i.esAnomalia)
-      .map(
-        (resumen) =>
-          resultado.inventario.items.find((i) => i.articuloId === resumen.articulo.id)?.id,
-      )
-      .filter((id): id is string => Boolean(id));
+      .map((resumen): AnomaliaPendiente | null => {
+        const itemId = resultado.inventario.items.find(
+          (i) => i.articuloId === resumen.articulo.id,
+        )?.id;
+        if (!itemId) return null;
+        return {
+          itemId,
+          origenDictado: {
+            cantidadDictada: resumen.cantidadDictada,
+            unidadDictada: resumen.unidadDictada,
+          },
+        };
+      })
+      .filter((entrada): entrada is AnomaliaPendiente => entrada !== null);
 
-    if (idsAnomalos.length > 0) {
-      setAnomaliaColaIds(idsAnomalos);
+    if (anomalosDeEstaCaptura.length > 0) {
+      setAnomaliaCola(anomalosDeEstaCaptura);
     } else if (resultado.itemsMatcheados.length > 0) {
       const engineName =
         resultado.fuenteIA === "GEMINI"
@@ -167,7 +188,16 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
     }
   }
 
-  const { isOnline, pendientes, sincronizando, encolar, sincronizar, descartar } = useOfflineSync(
+  const {
+    isOnline,
+    modoBodegaSimulado,
+    toggleModoBodega,
+    pendientes,
+    sincronizando,
+    encolar,
+    sincronizar,
+    descartar,
+  } = useOfflineSync(
     inventarioId,
     (resultado, texto) => {
       toast.success(`Dictado sincronizado: "${texto}"`);
@@ -175,12 +205,35 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
     },
   );
 
+  // `isOnline` ya refleja tanto la red real como el toggle de demo "Simular
+  // Pérdida de Señal" (ver useOfflineSync) — si está en false, ni se
+  // intenta el fetch: se encola directo. Antes esto solo se detectaba
+  // DESPUÉS de que `api.procesarVoz` fallara con `status === 0` (fetch
+  // real caído) — el toggle de demo no hace caer el fetch de verdad (la
+  // red sigue funcionando, solo se está *simulando* que no), así que un
+  // dictado hecho con el toggle activo pasaba derecho al servidor,
+  // contradiciendo el badge que decía "Modo Bodega Sótano (Simulado)".
   async function handleProcesar(texto: string) {
+    if (!isOnline) {
+      try {
+        await encolar(texto);
+        toast.info(
+          "Sin conexión: dictado guardado en este dispositivo, se enviará al volver la señal",
+        );
+      } catch {
+        toast.error(`No se pudo guardar. ANOTA A MANO: "${texto}"`, { duration: Infinity });
+      }
+      return;
+    }
+
     setProcesandoVoz(true);
     try {
       const resultado = await api.procesarVoz(inventarioId, texto);
       aplicarResultado(resultado, false);
     } catch (err) {
+      // Fallback para una caída real de red que `isOnline` todavía no
+      // reflejó (el evento 'offline' del navegador puede llegar con
+      // latencia respecto al fetch que ya estaba en vuelo).
       if (err instanceof ApiError && err.status === 0) {
         try {
           await encolar(texto);
@@ -203,6 +256,11 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
   // equivalente para códigos de barras), así que sin conexión se le pide al
   // operario usar dictado por voz/texto, que sí tiene fallback offline.
   async function handleProcesarSku(sku: string, cantidad: number) {
+    if (!isOnline) {
+      toast.error("Sin conexión: el escaneo por SKU necesita señal. Usa dictado por voz/texto.");
+      return;
+    }
+
     setProcesandoVoz(true);
     try {
       const resultado = await api.procesarSku(inventarioId, { sku, cantidad });
@@ -226,6 +284,11 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
     item: NoMatcheadoPendiente,
     articuloId: string,
   ) {
+    if (!isOnline) {
+      toast.error("Sin conexión: no se puede registrar el artículo elegido hasta recuperar la señal.");
+      return;
+    }
+
     // Igual que handleProcesar/handleProcesarSku: marca procesandoVoz para
     // deshabilitar el dictado por voz/texto mientras esta escritura está en
     // vuelo. Sin esto, aplicarResultado hace setInventario(snapshot completo)
@@ -251,11 +314,17 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
 
   async function handleConfirmarAnomalia() {
     if (!anomaliaModalEntrada) return;
+    if (!isOnline) {
+      toast.error("Sin conexión: no se puede confirmar la cantidad hasta recuperar la señal.");
+      return;
+    }
     try {
       await Promise.all(
         anomaliaModalEntrada.alertas.map((a) => api.resolverAlerta(inventarioId, a.id)),
       );
-      setAnomaliaColaIds((prev) => prev.filter((id) => id !== anomaliaModalEntrada.item.id));
+      setAnomaliaCola((prev) =>
+        prev.filter((a) => a.itemId !== anomaliaModalEntrada.item.id),
+      );
       await cargar();
       toast.success(`Cantidad confirmada: ${anomaliaModalEntrada.item.articulo.nombre}`);
     } catch (err) {
@@ -263,13 +332,44 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
     }
   }
 
-  function handleRedictarAnomalia() {
+  async function handleRedictarAnomalia() {
     if (!anomaliaModalEntrada) return;
+    const pendiente = anomaliaCola.find(
+      (a) => a.itemId === anomaliaModalEntrada.item.id,
+    );
+
+    // Si esta anomalía viene de un dictado hecho en esta sesión, se
+    // deshace ANTES de dejar redication — si no, el conteo corregido se
+    // suma sobre el erróneo en vez de reemplazarlo (bug real reportado:
+    // cada intento de "corregir" dejaba el total más alto, no el correcto).
+    // Sin `origenDictado` (ej. se reabrió una card vieja tras recargar la
+    // página) no hay nada que deshacer — se re-dicta directo, igual que antes,
+    // sin necesitar conexión para este paso.
+    if (pendiente?.origenDictado) {
+      if (!isOnline) {
+        toast.error("Sin conexión: no se puede deshacer el conteo anterior hasta recuperar la señal.");
+        return;
+      }
+      try {
+        const resultado = await api.deshacerConteo(
+          inventarioId,
+          anomaliaModalEntrada.item.articuloId,
+          pendiente.origenDictado,
+        );
+        setInventario(resultado.inventario);
+      } catch (err) {
+        toast.error(
+          err instanceof ApiError ? err.message : "No se pudo deshacer el conteo anterior",
+        );
+        return;
+      }
+    }
+
     // Se saca de la cola solo para esta visita (no se resuelve la alerta):
     // si hay más anomalías encoladas, el modal avanza a la siguiente; si el
     // operario recarga o vuelve más tarde, esta reaparece porque sigue sin
     // resolverse en el servidor.
-    setAnomaliaColaIds((prev) => prev.filter((id) => id !== anomaliaModalEntrada.item.id));
+    setAnomaliaCola((prev) => prev.filter((a) => a.itemId !== anomaliaModalEntrada.item.id));
     setVoiceResetKey((k) => k + 1);
   }
 
@@ -335,8 +435,11 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
 
   return (
     <main className="mx-auto max-w-6xl space-y-6 p-4 pb-10 sm:p-8">
-      <InventarioHeader inventario={inventario} />
+      <div data-no-print>
+        <InventarioHeader inventario={inventario} />
+      </div>
 
+      <div data-no-print>
       {usuario?.rol !== "OPERARIO" && (
         <div className="flex items-center gap-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-[#FFD000] shadow-[0_4px_20px_-4px_rgba(255,208,0,0.15)] animate-in fade-in slide-in-from-top-2 duration-300">
           <Zap className="h-5 w-5 text-secondary animate-pulse shrink-0" />
@@ -365,6 +468,8 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
 
           <ColaOfflineIndicator
             isOnline={isOnline}
+            modoBodegaSimulado={modoBodegaSimulado}
+            toggleModoBodega={toggleModoBodega}
             pendientes={pendientes}
             sincronizando={sincronizando}
             onSincronizar={() => void sincronizar({ incluirFallidos: true })}
@@ -412,12 +517,22 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
                     <ItemInventarioCard
                       item={item}
                       esCiego={usuario?.rol === "OPERARIO"}
-                      alertas={inventario.alertas.filter((a) => a.itemInventarioId === item.id)}
+                      // `!a.resuelto`: sin esto, una alerta ya cerrada de un
+                      // ciclo anterior (dictar -> anomalía -> confirmar ->
+                      // auditor revisa) se queda como badge para siempre —
+                      // cada ciclo posterior agrega uno más, sin límite.
+                      alertas={inventario.alertas.filter(
+                        (a) => a.itemInventarioId === item.id && !a.resuelto,
+                      )}
                       onRevisarAnomalia={() => {
-                        // Prioriza este ítem en la cola sin perder el resto de anomalías pendientes.
-                        setAnomaliaColaIds((prev) => [
-                          item.id,
-                          ...prev.filter((id) => id !== item.id),
+                        // Prioriza este ítem en la cola sin perder el resto de
+                        // anomalías pendientes. Sin `origenDictado` a propósito:
+                        // reabrir una card ya existente no es "acabo de dictar
+                        // mal algo", así que "Re-dictar/Corregir" acá no tiene
+                        // ningún conteo previo (de esta sesión) que deshacer.
+                        setAnomaliaCola((prev) => [
+                          { itemId: item.id },
+                          ...prev.filter((a) => a.itemId !== item.id),
                         ]);
                       }}
                     />
@@ -438,6 +553,9 @@ export function InventarioPageContent({ params }: { params: { id: string } }) {
           <AccionesCierre inventario={inventario} onEstadoActualizado={handleEstadoActualizado} />
         </div>
       </div>
+      </div>
+
+      <PrintActa inventario={inventario} operarioNombre={usuario?.nombre} />
 
       <AnomaliaModal
         entrada={anomaliaModalEntrada}

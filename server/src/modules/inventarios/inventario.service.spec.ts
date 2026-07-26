@@ -577,3 +577,195 @@ describe('InventarioService.procesarTomaPorVoz — transaccionalidad de escritur
     ).rejects.toThrow('timeout simulado de Postgres');
   });
 });
+
+/**
+ * Regresión de un bug real reportado (con capturas de producción):
+ * "Re-dictar / Corregir" dejaba el conteo ACUMULADO en vez de reemplazado
+ * — cada intento de corregir un dictado erróneo sumaba otra vez la
+ * cantidad en vez de deshacer la anterior. `deshacerUltimoConteo` es lo
+ * que el cliente llama antes de dejar redication, para restar el delta
+ * exacto que causó la anomalía pendiente.
+ */
+describe('InventarioService.deshacerUltimoConteo', () => {
+  const TX_MARCADOR = { esLaTransaccion: true };
+
+  function buildService(opts: {
+    findItem?: jest.Mock;
+    incrementarConteo?: jest.Mock;
+    articulo?: Articulo;
+  }) {
+    const articulo =
+      opts.articulo ??
+      buildArticulo({
+        id: 'art-1',
+        nombre: 'ARROZ DOÑA PEPA',
+        unidadEstd: UnidadMedida.KILOGRAMO,
+        stockHistoricoAvg: 5,
+      });
+
+    const itemInventario = {
+      id: 'item-1',
+      inventarioId: 'inv-1',
+      articuloId: 'art-1',
+      teorico: 5,
+      conteoFisico: 0,
+      unidadUsada: UnidadMedida.KILOGRAMO,
+      esAnomalia: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const ejecutarEnTransaccion = jest.fn(
+      (fn: (tx: unknown) => Promise<unknown>) => fn(TX_MARCADOR),
+    );
+
+    const inventarioRepository = {
+      findById: jest.fn().mockResolvedValue(buildInventario()),
+      findDetalleById: jest.fn().mockResolvedValue(buildInventario()),
+      findItem:
+        opts.findItem ??
+        jest.fn().mockResolvedValue({ ...itemInventario, conteoFisico: 20 }),
+      ejecutarEnTransaccion,
+      incrementarConteo:
+        opts.incrementarConteo ?? jest.fn().mockResolvedValue(itemInventario),
+      promedioHistoricoPorAlmacen: jest.fn().mockResolvedValue(null),
+      actualizarEsAnomalia: jest.fn().mockResolvedValue(itemInventario),
+      crearAlertas: jest.fn().mockResolvedValue(0),
+      resolverAlertasSuperadas: jest.fn().mockResolvedValue(0),
+    } as unknown as InventarioRepository;
+
+    const articuloService = {
+      findById: jest.fn().mockResolvedValue(articulo),
+    } as unknown as ArticuloService;
+    const anomaliasService = {
+      evaluarConteo: jest.fn().mockReturnValue({
+        conteoFisico: 0,
+        unidadUsada: UnidadMedida.KILOGRAMO,
+        esAnomalia: true,
+        alertas: [{ tipo: TipoAlerta.ANOMALIA_CANTIDAD, mensaje: 'x' }],
+      }),
+    } as unknown as AnomaliasService;
+
+    return {
+      service: new InventarioService(
+        inventarioRepository,
+        {} as unknown as AlmacenRepository,
+        articuloService,
+        {} as unknown as AiEngineService,
+        anomaliasService,
+        {} as unknown as IntegrationErpService,
+      ),
+      inventarioRepository,
+      ejecutarEnTransaccion,
+    };
+  }
+
+  it('resta el delta CONVERTIDO (negativo) en vez de sumarlo', async () => {
+    const incrementarConteo = jest.fn().mockResolvedValue({
+      id: 'item-1',
+      inventarioId: 'inv-1',
+      articuloId: 'art-1',
+      teorico: 5,
+      conteoFisico: 0,
+      unidadUsada: UnidadMedida.KILOGRAMO,
+      esAnomalia: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const { service } = buildService({ incrementarConteo });
+
+    await service.deshacerUltimoConteo(
+      'inv-1',
+      'art-1',
+      20,
+      UnidadMedida.KILOGRAMO,
+    );
+
+    expect(incrementarConteo).toHaveBeenCalledWith(
+      expect.objectContaining({ delta: -20 }),
+      TX_MARCADOR,
+    );
+  });
+
+  it('convierte la unidad antes de restar (ej. gramos -> kilogramos)', async () => {
+    const incrementarConteo = jest.fn().mockResolvedValue({
+      id: 'item-1',
+      inventarioId: 'inv-1',
+      articuloId: 'art-1',
+      teorico: 5,
+      conteoFisico: 0,
+      unidadUsada: UnidadMedida.KILOGRAMO,
+      esAnomalia: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const { service } = buildService({ incrementarConteo });
+
+    await service.deshacerUltimoConteo(
+      'inv-1',
+      'art-1',
+      2000,
+      UnidadMedida.GRAMO,
+    );
+
+    expect(incrementarConteo).toHaveBeenCalledWith(
+      expect.objectContaining({ delta: -2 }),
+      TX_MARCADOR,
+    );
+  });
+
+  it('si la unidad no se puede convertir (era UNIDAD_AMBIGUA), no resta nada — no había nada que deshacer', async () => {
+    const incrementarConteo = jest.fn().mockResolvedValue({
+      id: 'item-1',
+      inventarioId: 'inv-1',
+      articuloId: 'art-1',
+      teorico: 5,
+      conteoFisico: 0,
+      unidadUsada: UnidadMedida.KILOGRAMO,
+      esAnomalia: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const { service } = buildService({
+      incrementarConteo,
+      articulo: buildArticulo({
+        id: 'art-1',
+        unidadEstd: UnidadMedida.KILOGRAMO,
+      }),
+    });
+
+    await service.deshacerUltimoConteo('inv-1', 'art-1', 1, UnidadMedida.LITRO);
+
+    expect(incrementarConteo).toHaveBeenCalledWith(
+      expect.objectContaining({ delta: 0 }),
+      TX_MARCADOR,
+    );
+  });
+
+  it('lanza NotFoundException si el artículo nunca se contó en este inventario', async () => {
+    const findItem = jest.fn().mockResolvedValue(null);
+    const { service } = buildService({ findItem });
+
+    await expect(
+      service.deshacerUltimoConteo(
+        'inv-1',
+        'art-1',
+        20,
+        UnidadMedida.KILOGRAMO,
+      ),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('corre dentro de una transacción, igual que el flujo normal de escritura', async () => {
+    const { service, ejecutarEnTransaccion } = buildService({});
+
+    await service.deshacerUltimoConteo(
+      'inv-1',
+      'art-1',
+      20,
+      UnidadMedida.KILOGRAMO,
+    );
+
+    expect(ejecutarEnTransaccion).toHaveBeenCalledTimes(1);
+  });
+});
