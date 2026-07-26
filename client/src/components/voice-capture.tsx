@@ -97,7 +97,7 @@ export function VoiceCapture({
           {fuenteIA === "REGLAS_LOCALES" && (
             <div className="flex items-center gap-1.5 rounded-full border border-secondary/40 bg-secondary/10 px-3.5 py-1 text-xs font-semibold text-secondary backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-300">
               <span className="h-2 w-2 rounded-full bg-secondary" />
-              Sin Conexión · Reglas Locales
+              Modo sin IA · Reglas Locales
             </div>
           )}
           {fuenteIA === "ESCANER_SKU" && (

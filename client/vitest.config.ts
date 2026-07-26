@@ -18,7 +18,9 @@ export default defineConfig({
       include: [
         "src/lib/auth-storage.ts",
         "src/lib/api.ts",
+        "src/lib/voice-sanitize.ts",
         "src/hooks/use-offline-sync.ts",
+        "src/hooks/use-speech-recognition.ts",
         "src/components/anomalia-modal.tsx",
       ],
       thresholds: {

@@ -30,15 +30,47 @@ interface GeminiGenerateContentResponse {
  */
 const GEMINI_RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
+/** Tope defensivo: nunca esperar más que esto por un `Retry-After`, aunque Gemini pida más. */
+const RETRY_AFTER_MAX_MS = 10_000;
+
+/** Error HTTP de Gemini con el status y (si vino) el `Retry-After` ya parseados — evita tener que re-parsear el mensaje de error con regex para decidir la estrategia de reintento. */
+class GeminiHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly retryAfterMs: number | null,
+  ) {
+    super(message);
+    this.name = 'GeminiHttpError';
+  }
+}
+
+/** `Retry-After` puede venir como segundos ("30") o como fecha HTTP — soporta ambos formatos. */
+function parseRetryAfterMs(header: string): number | null {
+  const segundos = Number(header);
+  if (Number.isFinite(segundos)) return Math.max(0, segundos * 1000);
+  const fecha = Date.parse(header);
+  if (!Number.isNaN(fecha)) return Math.max(0, fecha - Date.now());
+  return null;
+}
+
 /**
  * Procesa dictado de voz/texto a ítems estructurados. Prioriza Gemini si hay
  * GEMINI_API_KEY; de lo contrario, cae a un parser local basado en reglas/regex
  * en español.
  *
  * Estrategia de resiliencia para Gemini:
- *  - Hasta GEMINI_MAX_RETRIES reintentos para errores transitorios (5xx / 429).
- *  - Backoff exponencial con jitter: delay = base * 2^intento + jitter aleatorio.
- *  - Si se agotan los reintentos, fallback transparente al parser local.
+ *  - Errores 5xx transitorios: hasta GEMINI_MAX_RETRIES reintentos con
+ *    backoff exponencial + jitter.
+ *  - 429 (rate limit / cuota agotada): si Gemini manda `Retry-After`, se
+ *    espera exactamente eso (topado a RETRY_AFTER_MAX_MS) y se reintenta
+ *    una vez; si no manda `Retry-After`, NO se reintenta con el backoff
+ *    genérico — la cuota de Gemini suele resetear por minuto/día, así que
+ *    unos pocos cientos de ms a segundos de backoff no la liberan, y
+ *    reintentar solo alarga la espera del operario para terminar cayendo
+ *    al parser local de todas formas.
+ *  - Si se agotan los reintentos o el error no es reintentable, fallback
+ *    transparente al parser local.
  */
 @Injectable()
 export class AiEngineService {
@@ -73,7 +105,7 @@ export class AiEngineService {
         return { items, fuente: 'GEMINI' };
       } catch (err) {
         this.logger.warn(
-          `Gemini no disponible tras ${this.maxRetries} intentos, usando parser local: ${
+          `Gemini no disponible, usando parser local: ${
             err instanceof Error ? err.message : String(err)
           }`,
         );
@@ -87,9 +119,8 @@ export class AiEngineService {
   }
 
   /**
-   * Ejecuta la llamada a Gemini con reintentos y backoff exponencial + jitter.
-   * Solo reintenta para errores HTTP transitorios definidos en GEMINI_RETRYABLE_STATUSES.
-   * Errores permanentes (4xx excluyendo 429) se propagan inmediatamente.
+   * Ejecuta la llamada a Gemini con reintentos. Ver la nota de la clase para
+   * la estrategia completa (distinta para 429 con/sin `Retry-After` vs 5xx).
    */
   private async procesarConGeminiConRetry(
     texto: string,
@@ -97,38 +128,39 @@ export class AiEngineService {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
-      if (attempt > 0) {
-        // Backoff exponencial con jitter: evita que múltiples instancias colisionen
-        const jitter = Math.random() * this.baseDelayMs;
-        const delay = this.baseDelayMs * Math.pow(2, attempt - 1) + jitter;
-        this.logger.log(
-          `Reintento ${attempt}/${this.maxRetries} para Gemini en ${Math.round(delay)}ms...`,
-        );
-        await this.sleep(delay);
-      }
-
       try {
         return await this.procesarConGemini(texto);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
 
-        // Extraer el código de estado HTTP del mensaje de error si existe
-        const statusMatch = lastError.message.match(/Gemini respondió (\d{3})/);
-        const statusCode = statusMatch ? parseInt(statusMatch[1], 10) : null;
-
-        if (statusCode !== null && !GEMINI_RETRYABLE_STATUSES.has(statusCode)) {
-          // Error permanente (ej. 401 inválida, 400 malformed) → no reintentar
-          this.logger.error(
-            `Error permanente de Gemini (${statusCode}), no se reintentará: ${lastError.message}`,
-          );
-          throw lastError;
+        if (lastError instanceof GeminiHttpError) {
+          if (!GEMINI_RETRYABLE_STATUSES.has(lastError.status)) {
+            this.logger.error(
+              `Error permanente de Gemini (${lastError.status}), no se reintentará: ${lastError.message}`,
+            );
+            throw lastError;
+          }
+          if (lastError.status === 429 && lastError.retryAfterMs === null) {
+            this.logger.warn(
+              `Gemini devolvió 429 (rate limit) sin header Retry-After — no tiene sentido reintentar con backoff genérico, se cae al parser local: ${lastError.message}`,
+            );
+            throw lastError;
+          }
         }
 
-        if (attempt < this.maxRetries) {
-          this.logger.warn(
-            `Error transitorio de Gemini (intento ${attempt + 1}/${this.maxRetries + 1}): ${lastError.message}`,
-          );
-        }
+        if (attempt >= this.maxRetries) break;
+
+        const delay =
+          lastError instanceof GeminiHttpError &&
+          lastError.retryAfterMs !== null
+            ? Math.min(lastError.retryAfterMs, RETRY_AFTER_MAX_MS)
+            : this.baseDelayMs * Math.pow(2, attempt) +
+              Math.random() * this.baseDelayMs;
+
+        this.logger.warn(
+          `Error transitorio de Gemini (intento ${attempt + 1}/${this.maxRetries + 1}): ${lastError.message} — reintentando en ${Math.round(delay)}ms`,
+        );
+        await this.sleep(delay);
       }
     }
 
@@ -175,8 +207,14 @@ export class AiEngineService {
     });
 
     if (!response.ok) {
-      throw new Error(
+      const retryAfterHeader = response.headers.get('retry-after');
+      const retryAfterMs = retryAfterHeader
+        ? parseRetryAfterMs(retryAfterHeader)
+        : null;
+      throw new GeminiHttpError(
         `Gemini respondió ${response.status}: ${await response.text()}`,
+        response.status,
+        retryAfterMs,
       );
     }
 
