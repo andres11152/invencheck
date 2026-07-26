@@ -145,6 +145,40 @@ describe("useSpeechRecognition", () => {
     expect(result.current.transcript).toBe("80 kg de maiz");
   });
 
+  it("no duplica en cascada cuando cada nuevo 'final' de Android trae la frase COMPLETA acumulada en vez de solo la palabra nueva (bug real: '15 kilos de papa y 90 kilos de cebolla' salía repetido y creciendo)", () => {
+    const { Ctor, instancia } = crearFakeRecognitionCtor();
+    vi.stubGlobal("SpeechRecognition", Ctor);
+
+    const { result } = renderHook(() => useSpeechRecognition());
+
+    act(() => {
+      result.current.start();
+    });
+
+    // Cada evento agrega UN resultado final nuevo al array, pero ese nuevo
+    // resultado no es la palabra nueva sola — es la frase entera dicha hasta
+    // ahora (comportamiento real observado en Android con dictados largos
+    // que tienen una pausa natural antes de "y").
+    const pasos = [
+      "15 kilos de papa",
+      "15 kilos de papa y",
+      "15 kilos de papa y 90",
+      "15 kilos de papa y 90 kilos",
+      "15 kilos de papa y 90 kilos de cebolla",
+    ];
+
+    for (let i = 0; i < pasos.length; i++) {
+      act(() => {
+        instancia.onresult?.({
+          resultIndex: 0,
+          results: pasos.slice(0, i + 1).map(finalResult),
+        });
+      });
+    }
+
+    expect(result.current.transcript).toBe("15 kilos de papa y 90 kilos de cebolla");
+  });
+
   it("reset() reinicia el conteo de finales, así el próximo dictado no arrastra el anterior", () => {
     const { Ctor, instancia } = crearFakeRecognitionCtor();
     vi.stubGlobal("SpeechRecognition", Ctor);

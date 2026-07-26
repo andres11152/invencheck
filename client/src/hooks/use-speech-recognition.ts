@@ -37,6 +37,26 @@ declare global {
 
 export type EstadoVoz = "inactivo" | "escuchando" | "error";
 
+/**
+ * Combina un fragmento final nuevo con el texto final ya acumulado.
+ * En Android, un `isFinal` nuevo no siempre es la palabra/frase nueva
+ * sola — a veces el motor reenvía la frase COMPLETA dicha hasta ese
+ * momento como si fuera un resultado nuevo (con una pausa natural antes
+ * de "y" o entre números). Sumar esos fragmentos con `+=` a ciegas produce
+ * duplicación en cascada ("15 kilos de papa y 15 kilos de papa y 90...").
+ * Si el fragmento nuevo ya empieza con lo acumulado, es un reenvío
+ * ampliado: reemplaza en vez de concatenar. Si lo acumulado ya empieza con
+ * el fragmento nuevo, el fragmento no aporta nada nuevo: se ignora.
+ */
+function combinarFinal(acumulado: string, nuevo: string): string {
+  const limpio = nuevo.trim();
+  if (!limpio) return acumulado;
+  if (!acumulado) return limpio;
+  if (limpio.startsWith(acumulado)) return limpio;
+  if (acumulado.startsWith(limpio)) return acumulado;
+  return `${acumulado} ${limpio}`;
+}
+
 export function useSpeechRecognition(lang = "es-CO") {
   const [isSupported, setIsSupported] = useState(false);
   const [estado, setEstado] = useState<EstadoVoz>("inactivo");
@@ -96,7 +116,7 @@ export function useSpeechRecognition(lang = "es-CO") {
         if (result.isFinal) {
           finalesEnEsteEvento++;
           if (finalesEnEsteEvento > finalesContadosRef.current) {
-            nuevoFinal += result[0].transcript;
+            nuevoFinal = combinarFinal(nuevoFinal, result[0].transcript);
           }
         } else {
           // Solo interesa el interim más reciente para la vista previa en
@@ -111,7 +131,7 @@ export function useSpeechRecognition(lang = "es-CO") {
       );
 
       if (nuevoFinal) {
-        setTranscript((prev) => limpiarRepeticiones(`${prev} ${nuevoFinal}`.trim()));
+        setTranscript((prev) => limpiarRepeticiones(combinarFinal(prev, nuevoFinal)));
       }
       setInterim(interimChunk);
     };
