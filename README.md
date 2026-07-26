@@ -1,7 +1,7 @@
 # InvenCheck
 
 [![CI](https://github.com/andres11152/invencheck/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/andres11152/invencheck/actions/workflows/ci.yml)
-[![server e2e](https://img.shields.io/badge/server%20e2e-28%20tests%20%2F%209%20specs-blue)](server/test)
+[![server e2e](https://img.shields.io/badge/server%20e2e-30%20tests%20%2F%2010%20specs-blue)](server/test)
 [![client tests](https://img.shields.io/badge/client%20tests-21%20tests%20%2F%204%20specs-blue)](client/src)
 [![coverage threshold](https://img.shields.io/badge/coverage%20threshold-enforced%20in%20CI-success)](#tests)
 
@@ -22,7 +22,7 @@ Este proyecto está en estado de **prototipo funcional para demo**, no de despli
 | Health check | Implementado |
 | CI (lint + typecheck + tests unitarios + e2e + build, server y client, en cada push/PR) | Implementado |
 | Tests unitarios | Parcial, con umbral de cobertura exigido en CI (falla el build si baja) — `server`: ~52% statements; `client`: ~80% statements pero acotado a los módulos más críticos (`auth-storage`, `api`, `use-offline-sync`, `use-speech-recognition`, `AnomaliaModal`), no a todo `src/` — ver sección Tests |
-| Tests de integración/e2e | Implementado — 9 specs contra Postgres real (auth, matching difuso, ambigüedad de matching, concurrencia de conteo, bloqueo por anomalía, autorización por rol, reporte de variación, webhooks ERP) |
+| Tests de integración/e2e | Implementado — 10 specs contra Postgres real (auth, matching difuso, ambigüedad de matching, números con separador de miles, concurrencia de conteo, bloqueo por anomalía, autorización por rol, reporte de variación, webhooks ERP) |
 | Contenerización (Dockerfile de `server`/`client`) | No existe — solo hay `docker-compose.yml` para Postgres local |
 | Dependencias con vulnerabilidades conocidas | `exceljs` (server, prod): sin fix limpio upstream — ver limitación #2. `prisma` CLI (server, dev-only): el hallazgo es de una versión más vieja que la ya instalada y de un comando (`prisma dev`) que este proyecto no usa. `next`/`postcss` (client): pendiente, requiere migración mayor — ver limitación #2 |
 | Observabilidad (logging estructurado, APM, métricas) | No existe — solo `Logger` de Nest a stdout |
@@ -139,7 +139,7 @@ npx tsc --noEmit             # typecheck (sin script npm dedicado, se invoca dir
 npm test                     # jest, unitarios
 npx jest <nombre>.spec.ts    # un solo archivo de test
 npm run test:cov             # con reporte de cobertura + umbral (el que corre CI)
-npm run test:e2e             # 9 specs e2e contra Postgres real — ver sección Tests para el setup de `.env.test`
+npm run test:e2e             # 10 specs e2e contra Postgres real — ver sección Tests para el setup de `.env.test`
 npm run build                # nest build
 ```
 
@@ -170,11 +170,12 @@ Cobertura actual (`npm run test:cov`): ~52% de statements (~51% líneas, ~51% br
 
 ### Server — e2e (`server/test/*.e2e-spec.ts`)
 
-9 specs, corren contra Postgres real (no mocks) vía `Test.createTestingModule` + `supertest`, cubriendo lo que los unitarios no pueden probar de verdad:
+10 specs, corren contra Postgres real (no mocks) vía `Test.createTestingModule` + `supertest`, cubriendo lo que los unitarios no pueden probar de verdad:
 
 - `auth.e2e-spec.ts` — login real, smoke test del harness.
 - `articulo-matching.e2e-spec.ts` — `findBestMatches` (trigramas `pg_trgm` + `f_unaccent`, imposible de mockear con sentido) y la detección de ambigüedad de `ArticuloService` entre variantes de color.
 - `procesar-voz-ambiguedad.e2e-spec.ts` — un dictado ambiguo (dos artículos casi empatados) no registra ningún conteo silencioso: cae en `itemsNoMatcheados` con el motivo listando los candidatos.
+- `procesar-voz-miles.e2e-spec.ts` — "15.000kg de papa criolla" (con y sin espacio) registra 15.000 kg de verdad, no 15 — regresión de un bug real de la convención colombiana de separador de miles.
 - `inventario-concurrency.e2e-spec.ts` — 20 dictados HTTP concurrentes del mismo artículo, verifica que el `increment` atómico no pierde ninguno (lost update).
 - `anomalia-blocking.e2e-spec.ts` — el flujo de negocio central: anomalía sin resolver bloquea `CONCILIADO`, resolverla lo desbloquea.
 - `roles-authorization.e2e-spec.ts` — OPERARIO recibe 403 en cierre/auditoría; AUDITOR/ADMIN pueden.

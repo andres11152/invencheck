@@ -184,4 +184,69 @@ describe('parseVoiceItemsLocally', () => {
       },
     ]);
   });
+
+  // Regresión de un bug real encontrado dictando/escribiendo "15.000kg de
+  // papa criolla": en español/convención colombiana el punto agrupa miles
+  // (15.000 = quince mil), no es separador decimal. Antes del fix, "15.000"
+  // se interpretaba como 15 (decimal), y "15.000kg" pegado (sin espacio)
+  // ni siquiera se reconocía como número — el ítem completo se descartaba
+  // en silencio, sin ningún error visible para el operario.
+  describe('números con separador de miles a la colombiana', () => {
+    it('interpreta "15.000" como quince mil, no como 15.0 decimal', () => {
+      const items = parseVoiceItemsLocally('15.000 kilos de papa criolla');
+      expect(items).toEqual([
+        {
+          articuloBusqueda: 'papa criolla',
+          cantidad: 15000,
+          unidadDictada: UnidadMedida.KILOGRAMO,
+        },
+      ]);
+    });
+
+    it('reconoce el número aunque venga pegado a la unidad ("15.000kg", sin espacio)', () => {
+      const items = parseVoiceItemsLocally('15.000kg de papa criolla');
+      expect(items).toEqual([
+        {
+          articuloBusqueda: 'papa criolla',
+          cantidad: 15000,
+          unidadDictada: UnidadMedida.KILOGRAMO,
+        },
+      ]);
+    });
+
+    it('soporta varios grupos de miles ("1.234.567")', () => {
+      const items = parseVoiceItemsLocally('1.234.567 unidades de arroz');
+      expect(items[0].cantidad).toBe(1234567);
+    });
+
+    it('un solo punto con 1-2 dígitos sigue siendo decimal real, no miles ("2.5")', () => {
+      const items = parseVoiceItemsLocally('2.5 litros de aceite');
+      expect(items[0].cantidad).toBe(2.5);
+    });
+  });
+
+  describe('abreviaturas de unidad pegadas o sueltas', () => {
+    it.each([
+      ['500ml de leche', 500, UnidadMedida.MILILITRO],
+      ['500 ml de leche', 500, UnidadMedida.MILILITRO],
+      ['200gr de queso', 200, UnidadMedida.GRAMO],
+      ['3 lt de aceite', 3, UnidadMedida.LITRO],
+    ])(
+      '"%s" -> cantidad %d, unidad %s',
+      (texto, cantidadEsperada, unidadEsperada) => {
+        const items = parseVoiceItemsLocally(texto);
+        expect(items).toHaveLength(1);
+        expect(items[0].cantidad).toBe(cantidadEsperada);
+        expect(items[0].unidadDictada).toBe(unidadEsperada);
+      },
+    );
+
+    it('"lb"/"lbs" convierte a KILOGRAMO igual que "libra" (mitad del valor)', () => {
+      const items = parseVoiceItemsLocally('3 lb de carne');
+      expect(items[0]).toMatchObject({
+        cantidad: 1.5,
+        unidadDictada: UnidadMedida.KILOGRAMO,
+      });
+    });
+  });
 });

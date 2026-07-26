@@ -76,16 +76,27 @@ const UNIT_WORD_TO_ENUM: Record<string, UnidadMedida> = {
   kilos: UnidadMedida.KILOGRAMO,
   kilogramo: UnidadMedida.KILOGRAMO,
   kilogramos: UnidadMedida.KILOGRAMO,
+  kg: UnidadMedida.KILOGRAMO,
+  kgs: UnidadMedida.KILOGRAMO,
   libra: UnidadMedida.KILOGRAMO,
   libras: UnidadMedida.KILOGRAMO,
+  lb: UnidadMedida.KILOGRAMO,
+  lbs: UnidadMedida.KILOGRAMO,
   gramo: UnidadMedida.GRAMO,
   gramos: UnidadMedida.GRAMO,
+  gr: UnidadMedida.GRAMO,
+  grs: UnidadMedida.GRAMO,
   litro: UnidadMedida.LITRO,
   litros: UnidadMedida.LITRO,
+  lt: UnidadMedida.LITRO,
+  lts: UnidadMedida.LITRO,
   mililitro: UnidadMedida.MILILITRO,
   mililitros: UnidadMedida.MILILITRO,
+  ml: UnidadMedida.MILILITRO,
   unidad: UnidadMedida.UNIDAD,
   unidades: UnidadMedida.UNIDAD,
+  und: UnidadMedida.UNIDAD,
+  unds: UnidadMedida.UNIDAD,
   canastilla: UnidadMedida.CANASTILLA,
   canastillas: UnidadMedida.CANASTILLA,
   caja: UnidadMedida.CAJA,
@@ -94,11 +105,34 @@ const UNIT_WORD_TO_ENUM: Record<string, UnidadMedida> = {
   porciones: UnidadMedida.PORCION,
 };
 
+/** Abreviaturas que, igual que "libra"/"libras", se manejan en KILOGRAMO pero valen la mitad. */
+const ABREVIATURAS_LIBRA = new Set(['libra', 'libras', 'lb', 'lbs']);
+
 const CONNECTOR_WORDS = new Set(['de', 'del']);
 
 interface NumberMatch {
   value: number;
   tokensConsumed: number;
+}
+
+/**
+ * Convención colombiana para números escritos con dígitos: el punto agrupa
+ * miles ("15.000" = quince mil), no es separador decimal. Heurística:
+ * - Uno o más grupos de EXACTAMENTE 3 dígitos tras el primer punto
+ *   ("15.000", "1.234.567") -> se interpreta como separador de miles.
+ * - Un solo punto con 1 o 2 dígitos después ("2.5", "2.50") -> decimal real
+ *   (una cantidad dictada con fracción de kilo/litro rara vez tiene
+ *   exactamente 3 decimales, así que este caso no colisiona con el de arriba).
+ * Devuelve `null` si el token no es numérico en absoluto.
+ */
+function parseNumeroConSeparadores(token: string): number | null {
+  if (/^\d{1,3}(\.\d{3})+$/.test(token)) {
+    return parseInt(token.replace(/\./g, ''), 10);
+  }
+  if (/^\d+([.,]\d+)?$/.test(token)) {
+    return parseFloat(token.replace(',', '.'));
+  }
+  return null;
 }
 
 /** Reconoce un número en palabras (0-999) a partir de tokens[i]. Sin "mil". */
@@ -156,8 +190,9 @@ function parseNumberAt(tokens: string[], i: number): NumberMatch | null {
     return { value: 0.75, tokensConsumed: 2 };
   }
 
-  if (/^\d+([.,]\d+)?$/.test(t)) {
-    let value = parseFloat(t.replace(',', '.'));
+  const numeroConSeparadores = parseNumeroConSeparadores(t);
+  if (numeroConSeparadores !== null) {
+    let value = numeroConSeparadores;
     let tokensConsumed = 1;
     if (
       tokens[i + 1] === 'y' &&
@@ -222,7 +257,16 @@ function tokenize(texto: string): string[] {
     stripAccents(texto)
       .toLowerCase()
       .replace(/,/g, ' y ')
-      .replace(/[^a-z0-9.\s]/g, ' '),
+      .replace(/[^a-z0-9.\s]/g, ' ')
+      // Separa dígitos pegados a letras ("15.000kg" -> "15.000 kg", "500ml"
+      // -> "500 ml"). Al hablar de viva voz esto no ocurre (el
+      // reconocimiento de voz ya entrega palabras separadas), pero el
+      // textarea de dictado es editable a mano y alguien puede escribirlo
+      // así — sin este split, "15.000kg" queda como un solo token que
+      // ninguna regla de número reconoce, y el ítem completo se
+      // descartaba en silencio (ver audit/reporte de bug de voz por texto).
+      .replace(/(\d)([a-z])/g, '$1 $2')
+      .replace(/([a-z])(\d)/g, '$1 $2'),
   );
   return clean.split(' ').filter(Boolean);
 }
@@ -250,8 +294,8 @@ export function parseVoiceItemsLocally(texto: string): DictadoVozItem[] {
 
     if (unidadDictada) {
       j++;
-      // Si la unidad fue "libra" o "libras" (500g), convertir la cantidad a KILOGRAMOS (0.5 kg por libra)
-      if (unitToken === 'libra' || unitToken === 'libras') {
+      // Si la unidad fue "libra"/"libras" (o su abreviatura "lb"/"lbs"), convertir a KILOGRAMOS (0.5 kg por libra)
+      if (ABREVIATURAS_LIBRA.has(unitToken)) {
         cantidadCalculada = cantidadCalculada * 0.5;
       }
       // Soporte para "cinco kilos y medio de arroz" (fracción tras la unidad)
