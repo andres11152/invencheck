@@ -160,7 +160,17 @@ export class ArticuloRepository {
       }
     }
 
-    await this.prisma.$transaction(ops, { timeout: 120000 });
+    // Una sola transacción para las ~938 filas del catálogo real superaba el
+    // timeout (confirmado en producción: 120362ms vs. 120000ms de límite,
+    // rollback completo). Se parte en lotes con su propia transacción corta
+    // cada uno — si un lote falla, los anteriores ya quedaron confirmados en
+    // vez de perder el import completo por una sola fila lenta.
+    const LOTE = 100;
+    for (let i = 0; i < ops.length; i += LOTE) {
+      await this.prisma.$transaction(ops.slice(i, i + LOTE), {
+        timeout: 30000,
+      });
+    }
     return rows.length;
   }
 }
