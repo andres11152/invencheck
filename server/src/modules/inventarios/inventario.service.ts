@@ -4,7 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AlmacenRepository } from '../almacenes/almacen.repository';
-import { ArticuloService } from '../articulos/articulo.service';
+import {
+  ArticuloService,
+  type VoiceMatchResult,
+} from '../articulos/articulo.service';
 import { AiEngineService, FuenteDictado } from '../ai-engine/ai-engine.service';
 import { AnomaliasService } from './services/anomalias.service';
 import {
@@ -278,7 +281,7 @@ export class InventarioService {
           articuloBusqueda: item.articuloBusqueda,
           cantidadDictada: item.cantidad,
           unidadDictada: item.unidadDictada,
-          motivo: 'Sin coincidencia en el catálogo de artículos',
+          motivo: this.describirMotivoNoMatch(match),
         });
         continue;
       }
@@ -354,6 +357,24 @@ export class InventarioService {
       itemsMatcheados,
       itemsNoMatcheados,
     };
+  }
+
+  /**
+   * Cuando `normalizarEntradaHablada` no resuelve un artículo, distingue
+   * "no encontré nada parecido" de "encontré dos candidatos igual de
+   * seguros" — este segundo caso es justo lo que la auditoría real
+   * (`audit-voice-matching.ts`) mostró que hoy se auto-confirmaba en
+   * silencio contra el candidato equivocado 78/938 veces. En vez de
+   * adivinar, se le pide al operario ser más específico.
+   */
+  private describirMotivoNoMatch(match: VoiceMatchResult): string {
+    if (match.candidatosAmbiguos && match.candidatosAmbiguos.length > 0) {
+      const nombres = match.candidatosAmbiguos
+        .map((a) => `"${a.nombre}"`)
+        .join(' o ');
+      return `Podría ser ${nombres} — sé más específico (ej. color, tamaño o cantidad exacta)`;
+    }
+    return 'Sin coincidencia en el catálogo de artículos';
   }
 
   private async validarInventarioEditable(

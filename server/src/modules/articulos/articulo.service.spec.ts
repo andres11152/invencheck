@@ -30,13 +30,15 @@ describe('ArticuloService.normalizarEntradaHablada', () => {
     const findBestMatches = jest.fn();
     const service = buildService(findBestMatches);
 
-    const result = await service.normalizarEntradaHablada('cinco kilos de');
+    // "kilos de" son solo unidad+conector — sin número (que ya no se
+    // descarta, ver articulo-text.util.spec.ts) ni nombre, normaliza a "".
+    const result = await service.normalizarEntradaHablada('kilos de');
 
     expect(result).toEqual({ textoNormalizado: '', articulo: null, score: 0 });
     expect(findBestMatches).not.toHaveBeenCalled();
   });
 
-  it('devuelve el artículo cuando el mejor match supera el umbral mínimo', async () => {
+  it('devuelve el artículo cuando el mejor match supera el umbral mínimo y no hay ambigüedad', async () => {
     const articulo = buildArticulo();
     const findBestMatches = jest
       .fn()
@@ -44,12 +46,69 @@ describe('ArticuloService.normalizarEntradaHablada', () => {
     const service = buildService(findBestMatches);
 
     const result = await service.normalizarEntradaHablada(
-      'tres kilos de papa criolla',
+      'kilos de papa criolla',
     );
 
     expect(result.articulo).toEqual(articulo);
     expect(result.score).toBe(0.9);
-    expect(findBestMatches).toHaveBeenCalledWith('papa criolla', 1);
+    expect(result.candidatosAmbiguos).toBeUndefined();
+    // Pide top-3 (no solo el top-1) para poder detectar ambigüedad.
+    expect(findBestMatches).toHaveBeenCalledWith('papa criolla', 3);
+  });
+
+  it('devuelve el artículo si el runner-up existe pero está lejos en score (sin ambigüedad)', async () => {
+    const articulo = buildArticulo();
+    const findBestMatches = jest.fn().mockResolvedValue([
+      { ...articulo, score: 0.9 },
+      { ...buildArticulo({ id: 'art-2', nombre: 'PAPA PASTUSA' }), score: 0.5 },
+    ]);
+    const service = buildService(findBestMatches);
+
+    const result = await service.normalizarEntradaHablada('papa criolla');
+
+    expect(result.articulo).toEqual(articulo);
+    expect(result.candidatosAmbiguos).toBeUndefined();
+  });
+
+  it('detecta ambigüedad cuando el top-1 y el runner-up quedan a menos de 0.15 de distancia', async () => {
+    const rojo = buildArticulo({
+      id: 'art-rojo',
+      nombre: 'CEBOLLA CABEZONA ROJA',
+    });
+    const blanco = buildArticulo({
+      id: 'art-blanco',
+      nombre: 'CEBOLLA CABEZONA BLANCA',
+    });
+    const findBestMatches = jest.fn().mockResolvedValue([
+      { ...rojo, score: 1.25 },
+      { ...blanco, score: 1.25 },
+    ]);
+    const service = buildService(findBestMatches);
+
+    const result = await service.normalizarEntradaHablada('cebolla cabezona');
+
+    expect(result.articulo).toBeNull();
+    expect(result.candidatosAmbiguos).toHaveLength(2);
+    expect(result.candidatosAmbiguos?.map((a) => a.id)).toEqual([
+      'art-rojo',
+      'art-blanco',
+    ]);
+    // El candidato ambiguo tampoco debe filtrar el campo "score".
+    expect(result.candidatosAmbiguos?.[0]).not.toHaveProperty('score');
+  });
+
+  it('no considera ambiguo un runner-up que no supera el umbral mínimo, aunque esté cerca en score', async () => {
+    const articulo = buildArticulo();
+    const findBestMatches = jest.fn().mockResolvedValue([
+      { ...articulo, score: 0.4 },
+      { ...buildArticulo({ id: 'art-2' }), score: 0.3 }, // por debajo de 0.35
+    ]);
+    const service = buildService(findBestMatches);
+
+    const result = await service.normalizarEntradaHablada('papa criolla');
+
+    expect(result.articulo).toEqual(articulo);
+    expect(result.candidatosAmbiguos).toBeUndefined();
   });
 
   it('rechaza el match si el score queda por debajo del umbral (0.35)', async () => {

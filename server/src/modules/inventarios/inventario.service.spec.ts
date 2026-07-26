@@ -8,6 +8,8 @@ import type { AnomaliasService } from './services/anomalias.service';
 import type { IntegrationErpService } from '../integration/integration-erp.service';
 import {
   EstadoInventario,
+  UnidadMedida,
+  type Articulo,
   type Inventario,
 } from '../../generated/prisma/client';
 
@@ -156,5 +158,111 @@ describe('InventarioService.cambiarEstado', () => {
     expect(enviarInventarioAERP).toHaveBeenCalledWith('inv-1');
     expect(cambiarEstado).not.toHaveBeenCalled();
     expect(result.estado).toBe(EstadoInventario.ENVIADO_ERP);
+  });
+});
+
+function buildArticulo(overrides: Partial<Articulo> = {}): Articulo {
+  return {
+    id: 'art-1',
+    sku: null,
+    nombre: 'ARTICULO TEST',
+    aliases: [],
+    categoria: 'Test',
+    unidadEstd: UnidadMedida.UNIDAD,
+    esProcesado: false,
+    stockHistoricoAvg: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...overrides,
+  };
+}
+
+describe('InventarioService.procesarTomaPorVoz — motivo de itemsNoMatcheados', () => {
+  function buildService(normalizarEntradaHablada: jest.Mock) {
+    const inventarioRepository = {
+      findById: jest.fn().mockResolvedValue(buildInventario()),
+      findDetalleById: jest.fn().mockResolvedValue(buildInventario()),
+    } as unknown as InventarioRepository;
+    const articuloService = {
+      normalizarEntradaHablada,
+    } as unknown as ArticuloService;
+    const aiEngineService = {
+      procesarDictadoVoz: jest.fn().mockResolvedValue({
+        items: [
+          {
+            articuloBusqueda: 'cebolla cabezona',
+            cantidad: 1,
+            unidadDictada: UnidadMedida.UNIDAD,
+          },
+        ],
+        fuente: 'REGLAS_LOCALES',
+      }),
+    } as unknown as AiEngineService;
+
+    return new InventarioService(
+      inventarioRepository,
+      {} as unknown as AlmacenRepository,
+      articuloService,
+      aiEngineService,
+      {} as unknown as AnomaliasService,
+      {} as unknown as IntegrationErpService,
+    );
+  }
+
+  it('reporta el motivo genérico cuando no hay ningún candidato', async () => {
+    const service = buildService(
+      jest.fn().mockResolvedValue({
+        textoNormalizado: 'cebolla cabezona',
+        articulo: null,
+        score: 0,
+      }),
+    );
+
+    const resultado = await service.procesarTomaPorVoz(
+      'inv-1',
+      'cebolla cabezona',
+    );
+
+    expect(resultado.itemsMatcheados).toHaveLength(0);
+    expect(resultado.itemsNoMatcheados).toHaveLength(1);
+    expect(resultado.itemsNoMatcheados[0].motivo).toBe(
+      'Sin coincidencia en el catálogo de artículos',
+    );
+  });
+
+  it('reporta los candidatos ambiguos por nombre cuando ArticuloService detecta ambigüedad real', async () => {
+    const rojo = buildArticulo({
+      id: 'art-rojo',
+      nombre: 'CEBOLLA CABEZONA ROJA',
+    });
+    const blanco = buildArticulo({
+      id: 'art-blanco',
+      nombre: 'CEBOLLA CABEZONA BLANCA',
+    });
+    const service = buildService(
+      jest.fn().mockResolvedValue({
+        textoNormalizado: 'cebolla cabezona',
+        articulo: null,
+        score: 1.25,
+        candidatosAmbiguos: [rojo, blanco],
+      }),
+    );
+
+    const resultado = await service.procesarTomaPorVoz(
+      'inv-1',
+      'cebolla cabezona',
+    );
+
+    expect(resultado.itemsMatcheados).toHaveLength(0);
+    expect(resultado.itemsNoMatcheados).toHaveLength(1);
+    expect(resultado.itemsNoMatcheados[0].motivo).toContain(
+      'CEBOLLA CABEZONA ROJA',
+    );
+    expect(resultado.itemsNoMatcheados[0].motivo).toContain(
+      'CEBOLLA CABEZONA BLANCA',
+    );
+    expect(resultado.itemsNoMatcheados[0].motivo).toContain(
+      'sé más específico',
+    );
   });
 });

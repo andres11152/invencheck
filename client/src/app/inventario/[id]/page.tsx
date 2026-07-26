@@ -102,13 +102,13 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
       }, 350);
     }
 
-    if (resultado.itemsNoMatcheados.length > 0) {
-      toast.warning(
-        `No se encontró coincidencia para: ${resultado.itemsNoMatcheados
-          .map((i) => i.articuloBusqueda)
-          .join(", ")}`,
-      );
-    }
+    // Un toast por ítem no matcheado (no uno combinado): el `motivo` ahora
+    // puede ser específico (ej. "Podría ser 'X' o 'Y' — sé más específico"
+    // cuando el server detecta ambigüedad real, no solo "sin coincidencia"),
+    // y combinarlos en un solo mensaje los haría ilegibles.
+    resultado.itemsNoMatcheados.forEach((item) => {
+      toast.warning(`"${item.articuloBusqueda}": ${item.motivo}`, { duration: 6000 });
+    });
 
     // Si la captura trajo una o más anomalías, encolamos TODOS los ítems
     // anómalos de esta captura (no solo el primero) para que el modal los

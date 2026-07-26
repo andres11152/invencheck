@@ -1,7 +1,7 @@
 # InvenCheck
 
 [![CI](https://github.com/andres11152/invencheck/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/andres11152/invencheck/actions/workflows/ci.yml)
-[![server e2e](https://img.shields.io/badge/server%20e2e-21%20tests%20%2F%207%20specs-blue)](server/test)
+[![server e2e](https://img.shields.io/badge/server%20e2e-28%20tests%20%2F%209%20specs-blue)](server/test)
 [![client tests](https://img.shields.io/badge/client%20tests-21%20tests%20%2F%204%20specs-blue)](client/src)
 [![coverage threshold](https://img.shields.io/badge/coverage%20threshold-enforced%20in%20CI-success)](#tests)
 
@@ -21,8 +21,8 @@ Este proyecto está en estado de **prototipo funcional para demo**, no de despli
 | Manejo centralizado de errores | Implementado |
 | Health check | Implementado |
 | CI (lint + typecheck + tests unitarios + e2e + build, server y client, en cada push/PR) | Implementado |
-| Tests unitarios | Parcial, con umbral de cobertura exigido en CI (falla el build si baja) — `server`: ~45% statements; `client`: ~78% statements pero acotado a los 4 módulos más críticos (`auth-storage`, `api`, `use-offline-sync`, `AnomaliaModal`), no a todo `src/` — ver sección Tests |
-| Tests de integración/e2e | Implementado — 7 specs contra Postgres real (auth, matching difuso, concurrencia de conteo, bloqueo por anomalía, autorización por rol, reporte de variación, webhooks ERP) |
+| Tests unitarios | Parcial, con umbral de cobertura exigido en CI (falla el build si baja) — `server`: ~52% statements; `client`: ~80% statements pero acotado a los módulos más críticos (`auth-storage`, `api`, `use-offline-sync`, `use-speech-recognition`, `AnomaliaModal`), no a todo `src/` — ver sección Tests |
+| Tests de integración/e2e | Implementado — 9 specs contra Postgres real (auth, matching difuso, ambigüedad de matching, concurrencia de conteo, bloqueo por anomalía, autorización por rol, reporte de variación, webhooks ERP) |
 | Contenerización (Dockerfile de `server`/`client`) | No existe — solo hay `docker-compose.yml` para Postgres local |
 | Dependencias con vulnerabilidades conocidas | `exceljs` (server, prod): sin fix limpio upstream — ver limitación #2. `prisma` CLI (server, dev-only): el hallazgo es de una versión más vieja que la ya instalada y de un comando (`prisma dev`) que este proyecto no usa. `next`/`postcss` (client): pendiente, requiere migración mayor — ver limitación #2 |
 | Observabilidad (logging estructurado, APM, métricas) | No existe — solo `Logger` de Nest a stdout |
@@ -139,7 +139,7 @@ npx tsc --noEmit             # typecheck (sin script npm dedicado, se invoca dir
 npm test                     # jest, unitarios
 npx jest <nombre>.spec.ts    # un solo archivo de test
 npm run test:cov             # con reporte de cobertura + umbral (el que corre CI)
-npm run test:e2e             # 7 specs e2e contra Postgres real — ver sección Tests para el setup de `.env.test`
+npm run test:e2e             # 9 specs e2e contra Postgres real — ver sección Tests para el setup de `.env.test`
 npm run build                # nest build
 ```
 
@@ -164,21 +164,23 @@ npm run build       # next build
 
 ### Server — unitarios
 
-Cobertura actual (`npm run test:cov`): ~45% de statements (~45% líneas, ~44% branches, ~27% funciones), excluyendo del cálculo el cliente Prisma generado, los `*.module.ts` (wiring de Nest sin lógica) y `main.ts`. Módulos con cobertura real: detección de anomalías, parser de voz local, matching difuso de artículos (a nivel de servicio, mockeando el repositorio), guards de auth/roles/API-key, `JwtStrategy`, `HealthController`, `AlmacenService`, `ReporteService` (incluyendo el escape de CSV), `InventarioService.cambiarEstado` (bloqueo por alertas y estados inmutables), filtro global de excepciones, y los controllers principales de inventario/auth verificando específicamente que `usuarioId` se derive del JWT y nunca del body.
+Cobertura actual (`npm run test:cov`): ~52% de statements (~51% líneas, ~51% branches, ~34% funciones), excluyendo del cálculo el cliente Prisma generado, los `*.module.ts` (wiring de Nest sin lógica) y `main.ts`. Módulos con cobertura real: detección de anomalías, parser de voz local, matching difuso de artículos y su detección de ambigüedad (a nivel de servicio, mockeando el repositorio), guards de auth/roles/API-key, `JwtStrategy`, `HealthController`, `AlmacenService`, `ReporteService` (incluyendo el escape de CSV), `InventarioService.cambiarEstado` y el motivo de `itemsNoMatcheados` por ambigüedad, `AiEngineService` (reintentos/backoff de Gemini, incluyendo el manejo de 429 con y sin `Retry-After`), filtro global de excepciones, y los controllers principales de inventario/auth verificando específicamente que `usuarioId` se derive del JWT y nunca del body.
 
 **Umbral fijado en CI** (`jest.coverageThreshold` en `server/package.json`, aplicado con `npm run test:cov`): 43% statements / 41% branches / 25% funciones / 42% líneas — un poco por debajo de lo ya logrado, a propósito: deja margen para fluctuaciones normales, pero una regresión real (borrar tests, agregar código sin probar) rompe el build. Deliberadamente no es 100%: perseguir cobertura total en getters/DTOs/wiring de Nest no protege nada real, solo infla el número: mejor un umbral más bajo pero exigido de verdad, sobre la lógica que sí importa.
 
 ### Server — e2e (`server/test/*.e2e-spec.ts`)
 
-7 specs, corren contra Postgres real (no mocks) vía `Test.createTestingModule` + `supertest`, cubriendo lo que los unitarios no pueden probar de verdad:
+9 specs, corren contra Postgres real (no mocks) vía `Test.createTestingModule` + `supertest`, cubriendo lo que los unitarios no pueden probar de verdad:
 
 - `auth.e2e-spec.ts` — login real, smoke test del harness.
-- `articulo-matching.e2e-spec.ts` — `findBestMatches` (trigramas `pg_trgm` + `f_unaccent`), imposible de mockear con sentido.
+- `articulo-matching.e2e-spec.ts` — `findBestMatches` (trigramas `pg_trgm` + `f_unaccent`, imposible de mockear con sentido) y la detección de ambigüedad de `ArticuloService` entre variantes de color.
+- `procesar-voz-ambiguedad.e2e-spec.ts` — un dictado ambiguo (dos artículos casi empatados) no registra ningún conteo silencioso: cae en `itemsNoMatcheados` con el motivo listando los candidatos.
 - `inventario-concurrency.e2e-spec.ts` — 20 dictados HTTP concurrentes del mismo artículo, verifica que el `increment` atómico no pierde ninguno (lost update).
 - `anomalia-blocking.e2e-spec.ts` — el flujo de negocio central: anomalía sin resolver bloquea `CONCILIADO`, resolverla lo desbloquea.
 - `roles-authorization.e2e-spec.ts` — OPERARIO recibe 403 en cierre/auditoría; AUDITOR/ADMIN pueden.
 - `reporte-variacion.e2e-spec.ts` — agregación SQL cruda de variación contra datos sembrados con valores conocidos.
 - `integration-webhook.e2e-spec.ts` — `ApiKeyGuard` de los webhooks ERP, con y sin key válida.
+- `procesar-sku.e2e-spec.ts` — resolución exacta por SKU (escáner de código de barras).
 
 **Setup local:** requiere una base `invencheck_test` en el mismo Postgres de `docker compose` (`CREATE DATABASE invencheck_test;`) y un `server/.env.test` (gitignored) con `DATABASE_URL` apuntando a esa base más `JWT_SECRET`/`ERP_WEBHOOK_API_KEY` fijos de prueba — `GEMINI_API_KEY` se deja vacío a propósito para forzar el parser de voz local. `npm run test:e2e` aplica las migraciones automáticamente (`pretest:e2e`) antes de correr. En CI no hace falta `.env.test`: las mismas variables se inyectan como env del job contra el Postgres de `services`.
 
@@ -224,6 +226,7 @@ En orden aproximado de impacto:
 3. Sin observabilidad: logs solo van a stdout, sin agregador ni APM. Un incidente en producción hoy solo se diagnostica con acceso directo al proceso.
 4. Rate limiting en memoria del proceso: válido para una sola instancia; escalar horizontalmente requeriría un storage compartido (Redis) para el throttler — deliberadamente no implementado todavía, prematuro para un prototipo de una sola instancia.
 5. Tests e2e (server) y de cliente ya existen pero con alcance acotado: falta cubrir la llamada saliente real al ERP y la comparación de auditoría ciega en server; en client falta la pantalla principal de conteo (`inventario/[id]/page.tsx`) y el resto de componentes/hooks — ver sección Tests para el detalle exacto de qué queda fuera.
+6. ~~Matching de voz contra el catálogo real: 8.3% de ambigüedad silenciosa.~~ **Resuelto.** Una auditoría real (`npm run audit:voice-matching` en `server`, contra los 938 artículos del catálogo, no fixtures sintéticos) encontró que el 8.3% (78/938) resolvía en silencio a OTRO artículo del catálogo, con score de confianza alto — la app no tenía ninguna señal para distinguir un match correcto de uno incorrecto igual de "seguro". Se corrigió con 3 cambios: (a) `ArticuloService.normalizarEntradaHablada` ahora pide el top-3 (no solo el top-1) y, si el runner-up queda a menos de `AMBIGUEDAD_GAP` (0.3) de distancia, no auto-confirma ninguno — el ítem cae en `itemsNoMatcheados` con un `motivo` que nombra los candidatos, en vez de adivinar; (b) `normalizeSpokenText` dejó de descartar números que en realidad identifican al producto (talla, calibre, mililitros); (c) `buildAliases` ahora también genera categoría+último calificador (`"cebolla roja"`, no solo `"cebolla cabezona"`), para que la variante corta más natural de decir ya distinga color/tamaño. Resultado tras el fix: **0/938 matches incorrectos silenciosos** (antes 78); 175/938 (18.7%) ahora piden precisión al operario en vez de auto-confirmar — el trade-off elegido a propósito, con datos, en favor de nunca fallar en silencio. Detalle completo en `server/README.md`.
 
 ## Licencia
 

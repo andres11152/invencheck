@@ -9,3 +9,6 @@ node_modules
 
 # Datos reales de negocio (Colsubsidio) usados para la ingesta masiva.
 /data
+
+# Reporte generado por `audit:voice-matching` sobre el catálogo real.
+/audit-voice-matching-report.json

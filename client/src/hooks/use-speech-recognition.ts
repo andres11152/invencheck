@@ -76,6 +76,16 @@ export function useSpeechRecognition(lang = "es-CO") {
     recognition.onresult = (event) => {
       let nuevoFinal = "";
       let interimChunk = "";
+      // Cuenta SOLO los resultados marcados `isFinal` dentro de este mismo
+      // evento (en orden), no la longitud cruda del array — un resultado
+      // que todavía es interim también ocupa una posición en
+      // `event.results`, así que compararse contra `event.results.length`
+      // hacía que, al pasar ese mismo resultado de interim a final en un
+      // evento posterior, se descartara por "ya contado" sin haberlo sumado
+      // nunca — de ahí que se perdiera texto dictado (ej. un número que
+      // tarda un evento extra en finalizarse mientras ya llegó interim la
+      // palabra siguiente).
+      let finalesEnEsteEvento = 0;
 
       // Se recorre el array completo (no desde `event.resultIndex`) porque
       // ese índice no es confiable en Android; en cambio, cada resultado
@@ -84,7 +94,8 @@ export function useSpeechRecognition(lang = "es-CO") {
       for (let i = 0; i < event.results.length; i++) {
         const result = event.results[i];
         if (result.isFinal) {
-          if (i >= finalesContadosRef.current) {
+          finalesEnEsteEvento++;
+          if (finalesEnEsteEvento > finalesContadosRef.current) {
             nuevoFinal += result[0].transcript;
           }
         } else {
@@ -96,7 +107,7 @@ export function useSpeechRecognition(lang = "es-CO") {
 
       finalesContadosRef.current = Math.max(
         finalesContadosRef.current,
-        event.results.length,
+        finalesEnEsteEvento,
       );
 
       if (nuevoFinal) {

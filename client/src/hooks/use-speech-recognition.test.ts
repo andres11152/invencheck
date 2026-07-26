@@ -36,6 +36,10 @@ function finalResult(transcript: string): FakeResult {
   return { isFinal: true, 0: { transcript } };
 }
 
+function interimResult(transcript: string): FakeResult {
+  return { isFinal: false, 0: { transcript } };
+}
+
 describe("useSpeechRecognition", () => {
   afterEach(() => {
     cleanup();
@@ -79,6 +83,46 @@ describe("useSpeechRecognition", () => {
       });
     });
     expect(result.current.transcript).toBe("ochenta kilos de maiz y sal");
+  });
+
+  it("no pierde un resultado que llega interim y se finaliza en un evento posterior mientras ya hay otro interim más adelante (bug real reportado: se perdía el número dictado)", () => {
+    const { Ctor, instancia } = crearFakeRecognitionCtor();
+    vi.stubGlobal("SpeechRecognition", Ctor);
+
+    const { result } = renderHook(() => useSpeechRecognition());
+
+    act(() => {
+      result.current.start();
+    });
+
+    // El número todavía es interim (el motor no está seguro del final "12.000").
+    act(() => {
+      instancia.onresult?.({ resultIndex: 0, results: [interimResult("12.000")] });
+    });
+    expect(result.current.transcript).toBe("");
+
+    // El motor finaliza el número (índice 0) Y ya empieza a reconocer la
+    // siguiente palabra como interim (índice 1) en el MISMO evento.
+    act(() => {
+      instancia.onresult?.({
+        resultIndex: 0,
+        results: [finalResult("12.000"), interimResult("kilos")],
+      });
+    });
+    expect(result.current.transcript).toBe("12.000");
+
+    // El segundo segmento ahora se finaliza — como el índice 1 ya había
+    // "aparecido" en el evento anterior (aunque solo como interim), contar
+    // por longitud de array en vez de por resultados realmente finales
+    // hacía que este final se descartara por "ya contado", perdiendo el
+    // texto. Debe sumarse correctamente.
+    act(() => {
+      instancia.onresult?.({
+        resultIndex: 0,
+        results: [finalResult("12.000"), finalResult(" kilos de arroz")],
+      });
+    });
+    expect(result.current.transcript).toBe("12.000 kilos de arroz");
   });
 
   it("limpia repeticiones incluso si llegan dentro del mismo resultado final", () => {

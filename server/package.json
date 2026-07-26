@@ -26,7 +26,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
     "prisma:studio": "prisma studio",
-    "prisma:import-excel": "tsx src/scripts/import-excel.ts"
+    "prisma:import-excel": "tsx src/scripts/import-excel.ts",
+    "audit:voice-matching": "tsx src/scripts/audit-voice-matching.ts"
   },
   "dependencies": {
     "@invencheck/shared": "*",

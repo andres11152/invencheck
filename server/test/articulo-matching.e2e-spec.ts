@@ -3,6 +3,7 @@ import { PrismaModule } from '../src/prisma/prisma.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { ArticulosModule } from '../src/modules/articulos/articulos.module';
 import { ArticuloRepository } from '../src/modules/articulos/articulo.repository';
+import { ArticuloService } from '../src/modules/articulos/articulo.service';
 import { UnidadMedida } from '../src/generated/prisma/client';
 import { truncateAll } from './utils/db-reset';
 import { crearArticulo } from './utils/seed-fixtures';
@@ -16,6 +17,7 @@ import './utils/env';
 describe('ArticuloRepository.findBestMatches (e2e)', () => {
   let prisma: PrismaService;
   let repo: ArticuloRepository;
+  let articuloService: ArticuloService;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -23,6 +25,7 @@ describe('ArticuloRepository.findBestMatches (e2e)', () => {
     }).compile();
     prisma = moduleRef.get(PrismaService);
     repo = moduleRef.get(ArticuloRepository);
+    articuloService = moduleRef.get(ArticuloService);
   });
 
   afterAll(async () => {
@@ -102,5 +105,54 @@ describe('ArticuloRepository.findBestMatches (e2e)', () => {
     const [top] = await repo.findBestMatches('bombillo led veinte vatios', 5);
 
     expect(top.score).toBeLessThan(0.35);
+  });
+
+  /**
+   * Regresión del hallazgo central de la auditoría real
+   * (audit-voice-matching.ts): dos variantes de color del mismo producto
+   * generaban el mismo alias corto y el top-1 se auto-confirmaba en
+   * silencio contra el artículo incorrecto. Ahora ArticuloService debe
+   * detectar la ambigüedad (no elegir ninguno) en vez de adivinar.
+   */
+  it('ArticuloService detecta ambigüedad real entre dos variantes de color y no elige ninguna', async () => {
+    await crearArticulo(prisma, {
+      nombre: 'CEBOLLA CABEZONA ROJA',
+      aliases: ['cebolla cabezona', 'cebolla roja'],
+      categoria: 'Verduras',
+    });
+    await crearArticulo(prisma, {
+      nombre: 'CEBOLLA CABEZONA BLANCA',
+      aliases: ['cebolla cabezona', 'cebolla blanca'],
+      categoria: 'Verduras',
+    });
+
+    const match =
+      await articuloService.normalizarEntradaHablada('cebolla cabezona');
+
+    expect(match.articulo).toBeNull();
+    expect(match.candidatosAmbiguos).toHaveLength(2);
+    expect(match.candidatosAmbiguos?.map((a) => a.nombre).sort()).toEqual([
+      'CEBOLLA CABEZONA BLANCA',
+      'CEBOLLA CABEZONA ROJA',
+    ]);
+  });
+
+  it('ArticuloService NO detecta ambigüedad cuando el operario sí especifica la variante', async () => {
+    const roja = await crearArticulo(prisma, {
+      nombre: 'CEBOLLA CABEZONA ROJA',
+      aliases: ['cebolla cabezona', 'cebolla roja'],
+      categoria: 'Verduras',
+    });
+    await crearArticulo(prisma, {
+      nombre: 'CEBOLLA CABEZONA BLANCA',
+      aliases: ['cebolla cabezona', 'cebolla blanca'],
+      categoria: 'Verduras',
+    });
+
+    const match =
+      await articuloService.normalizarEntradaHablada('cebolla roja');
+
+    expect(match.articulo?.id).toBe(roja.id);
+    expect(match.candidatosAmbiguos).toBeUndefined();
   });
 });

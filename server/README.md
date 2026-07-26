@@ -1,7 +1,7 @@
 # InvenCheck — Server
 
 [![CI](https://github.com/andres11152/invencheck/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/andres11152/invencheck/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-94%20unit%20%2B%2021%20e2e-blue)](test)
+[![tests](https://img.shields.io/badge/tests-115%20unit%20%2B%2028%20e2e-blue)](test)
 [![coverage threshold](https://img.shields.io/badge/coverage%20threshold-43%25%20stmts%20(CI--enforced)-success)](#tests)
 
 API REST de InvenCheck — NestJS 11 + Prisma 7 (driver adapters) + PostgreSQL. Sirve el catálogo de artículos, el flujo de toma física por voz, la detección de anomalías y los reportes de variación bajo el prefijo `/api`.
@@ -74,7 +74,7 @@ npm run test:e2e             # e2e contra Postgres real — ver setup abajo
 
 **Umbral de cobertura** (`jest.coverageThreshold` en `package.json`): 43% statements / 41% branches / 25% funciones / 42% líneas, sobre `src/` excluyendo el cliente Prisma generado, `*.module.ts` (wiring sin lógica) y `main.ts`. Se aplica con `test:cov` y falla el build en CI si baja. No es 100% a propósito — el objetivo es proteger la lógica de negocio real (anomalías, autorización, guards, agregaciones), no inflar el número con getters y DTOs.
 
-**e2e (`test/*.e2e-spec.ts`)** — 7 specs, 21 tests, contra Postgres real vía `Test.createTestingModule` + Supertest (no mocks): login, matching difuso (`pg_trgm`/`f_unaccent`, imposible de mockear con sentido), concurrencia de conteo (prueba que el `increment` atómico no pierde escrituras), el flujo central de bloqueo por anomalía, autorización por rol, agregación de reportes, y los webhooks de integración ERP.
+**e2e (`test/*.e2e-spec.ts`)** — 9 specs, 28 tests, contra Postgres real vía `Test.createTestingModule` + Supertest (no mocks): login, matching difuso (`pg_trgm`/`f_unaccent`, imposible de mockear con sentido) y su detección de ambigüedad, resolución exacta por SKU, concurrencia de conteo (prueba que el `increment` atómico no pierde escrituras), el flujo central de bloqueo por anomalía, autorización por rol, agregación de reportes, y los webhooks de integración ERP.
 
 Setup local:
 ```bash
@@ -85,6 +85,17 @@ npm run test:e2e             # aplica migraciones automáticamente (pretest:e2e)
 ```
 
 `.env.test` está gitignored — en CI las mismas variables se inyectan como env del job contra el Postgres del `services` container, sin necesidad de ese archivo.
+
+### Auditoría de matching de voz contra el catálogo real
+
+```bash
+npm run prisma:import-excel     # si el catálogo real todavía no está cargado
+npm run audit:voice-matching
+```
+
+`src/scripts/audit-voice-matching.ts` corre el mismo `ArticuloService.normalizarEntradaHablada` que usa `procesarTomaPorVoz` en producción contra cada artículo del catálogo real importado (no fixtures sintéticos), simulando "lo que diría un operario" con el alias autogenerado del artículo. No corre en CI ni es parte de `test:e2e` — el catálogo real vive en `data/` (gitignored), así que este script es una auditoría manual, no una regresión automatizada.
+
+La primera corrida (938 artículos) encontró 78 (8.3%) que resolvían en silencio a OTRO artículo del catálogo con score alto — sin ninguna señal de que fuera incorrecto. Se corrigió con 3 cambios (detección de ambigüedad top-1/top-2 en `ArticuloService`, `normalizeSpokenText` ya no descarta números que identifican al producto, `buildAliases` prioriza el calificador final). Última corrida tras el fix: **0/938 matches incorrectos silenciosos**, 175/938 (18.7%) ahora caen en `itemsNoMatcheados` pidiendo precisión al operario en vez de auto-confirmar — trade-off elegido con los datos de la propia auditoría (`AMBIGUEDAD_GAP = 0.3` en `articulo.service.ts`, con el razonamiento completo en el comentario de esa constante). Detalle completo: limitación #6 (ya resuelta) en el README raíz.
 
 ## Arquitectura
 

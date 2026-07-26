@@ -1,37 +1,41 @@
 import { buildAliases, normalizeSpokenText } from './articulo-text.util';
 
 describe('normalizeSpokenText', () => {
-  it('quita cantidad, unidad y conectores, dejando solo el nombre del artículo', () => {
-    expect(normalizeSpokenText('tres kilos de aji casero')).toBe('aji casero');
+  it('quita unidad y conectores, dejando el nombre del artículo', () => {
+    expect(normalizeSpokenText('de aji casero')).toBe('aji casero');
   });
 
   it('es insensible a tildes y mayúsculas', () => {
-    expect(normalizeSpokenText('DOS KILOS DE PAPA CRIOLLA')).toBe(
-      'papa criolla',
+    expect(normalizeSpokenText('DE PAPA CRIOLLA')).toBe('papa criolla');
+  });
+
+  // Deliberado: esta función recibe `articuloBusqueda` ya separado de la
+  // cantidad por el parser de voz (local o Gemini) — cualquier número que
+  // sobreviva hasta acá casi siempre es parte del identificador del propio
+  // producto (calibre "2-0", talla, mililitros, cantidad de dígitos), no
+  // cantidad sobrante. Descartarlo colapsaba variantes distintas del
+  // catálogo real entre sí — ver audit-voice-matching.ts.
+  it('NO elimina números en palabras (uno-diez): pueden ser parte del identificador del producto', () => {
+    expect(
+      normalizeSpokenText('acido poliglicolico dos cero uso zoologico'),
+    ).toBe('acido poliglicolico dos cero uso zoologico');
+  });
+
+  it('NO elimina dígitos sueltos por la misma razón', () => {
+    expect(normalizeSpokenText('calculadora manual 8 digitos')).toBe(
+      'calculadora manual 8 digitos',
     );
   });
 
-  // SPOKEN_QUANTITY_WORDS solo cubre 1-10 en palabras ("un".."diez"), no
-  // números más grandes ("quince", "veinte"...). No es un bug vivo: en el
-  // pipeline real esta función recibe `articuloBusqueda` ya separado de la
-  // cantidad por el parser de voz (ver inventario.service.ts), nunca texto
-  // crudo con el número incluido — se documenta el límite actual para que
-  // un cambio futuro sea intencional, no una regresión silenciosa.
-  it('no elimina números en palabras mayores a diez (limitación conocida, no usada en el pipeline real)', () => {
-    expect(normalizeSpokenText('quince kilos de papa criolla')).toBe(
-      'quince papa criolla',
-    );
+  it('sí quita palabras de unidad de medida dictada y conectores alrededor de un número', () => {
+    expect(normalizeSpokenText('2.5 litros de aceite')).toBe('2.5 aceite');
   });
 
-  it('quita dígitos sueltos además de números en palabras', () => {
-    expect(normalizeSpokenText('2.5 litros de aceite')).toBe('aceite');
+  it('deja el texto vacío si solo había unidad/conectores (sin número, sin nombre)', () => {
+    expect(normalizeSpokenText('kilos de')).toBe('');
   });
 
-  it('deja el texto vacío si solo había cantidad/unidad/conectores', () => {
-    expect(normalizeSpokenText('cinco kilos de')).toBe('');
-  });
-
-  it('no rompe con texto ya limpio (sin cantidad ni unidad)', () => {
+  it('no rompe con texto ya limpio (sin unidad ni conectores)', () => {
     expect(normalizeSpokenText('papa criolla')).toBe('papa criolla');
   });
 
@@ -66,6 +70,25 @@ describe('buildAliases', () => {
     const nombre = 'PAPA CRIOLLA';
     const aliases = buildAliases(nombre);
     expect(aliases).not.toContain(nombre.toLowerCase());
+  });
+
+  it('genera categoría+último calificador para poder distinguir variantes de color/tamaño', () => {
+    const rojas = buildAliases('CEBOLLA CABEZONA ROJA');
+    const blancas = buildAliases('CEBOLLA CABEZONA BLANCA');
+
+    expect(rojas).toContain('cebolla roja');
+    expect(blancas).toContain('cebolla blanca');
+    // El alias corto original (ancla+2do token) seguía siendo ambiguo entre
+    // ambas — sigue existiendo, pero ya no es el único disponible.
+    expect(rojas).toContain('cebolla cabezona');
+    expect(blancas).toContain('cebolla cabezona');
+  });
+
+  it('no genera el alias categoría+último calificador para nombres de solo 2 tokens (sería idéntico al nombre completo)', () => {
+    // Con 2 tokens, tokens[0]+tokens[-1] coincide con el nombre completo
+    // (ya filtrado como redundante) — no debe aparecer ningún duplicado.
+    const aliases = buildAliases('MAYONESA LIGHT');
+    expect(new Set(aliases).size).toBe(aliases.length);
   });
 
   it('limita a un máximo de 5 alias', () => {
