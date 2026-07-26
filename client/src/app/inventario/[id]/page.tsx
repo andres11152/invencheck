@@ -21,6 +21,10 @@ import { AccionesCierre } from "@/components/acciones-cierre";
 import { ColaOfflineIndicator } from "@/components/cola-offline-indicator";
 import { AuditoriaCiegaCard } from "@/components/auditoria-ciega-card";
 import { AlertasRevisionAuditor } from "@/components/alertas-revision-auditor";
+import {
+  ItemsNoMatcheadosCard,
+  type NoMatcheadoPendiente,
+} from "@/components/items-no-matcheados-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ClientProviders } from "@/components/client-providers";
@@ -45,6 +49,12 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
   // desaparecer la anomalía resuelta, automáticamente avanza a la siguiente
   // de la cola sin lógica adicional.
   const [anomaliaColaIds, setAnomaliaColaIds] = useState<string[]>([]);
+
+  // Ítems dictados que no se guardaron (sin match o ambiguos entre variantes
+  // del catálogo) — nunca llegan a existir como ItemInventario en el
+  // servidor, así que esta cola vive solo en el cliente mientras dura la
+  // sesión de conteo (ver ItemsNoMatcheadosCard).
+  const [noMatcheadosCola, setNoMatcheadosCola] = useState<NoMatcheadoPendiente[]>([]);
 
   const anomaliaModalEntrada = useMemo(() => {
     if (!inventario) return null;
@@ -108,13 +118,25 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
       }, 350);
     }
 
-    // Un toast por ítem no matcheado (no uno combinado): el `motivo` ahora
-    // puede ser específico (ej. "Podría ser 'X' o 'Y' — sé más específico"
-    // cuando el server detecta ambigüedad real, no solo "sin coincidencia"),
-    // y combinarlos en un solo mensaje los haría ilegibles.
-    resultado.itemsNoMatcheados.forEach((item) => {
-      toast.warning(`"${item.articuloBusqueda}": ${item.motivo}`, { duration: 6000 });
-    });
+    // Antes esto era un toast por ítem (6s y desaparecía sin dejar rastro):
+    // si el operario no lo alcanzaba a leer mientras seguía dictando —el
+    // caso de uso normal, sin mirar la pantalla— el ítem quedaba perdido
+    // sin que nadie se enterara. Ahora queda en una cola persistente
+    // (ItemsNoMatcheadosCard) hasta que se re-dicte o se descarte a mano.
+    if (resultado.itemsNoMatcheados.length > 0) {
+      setNoMatcheadosCola((prev) => [
+        ...prev,
+        ...resultado.itemsNoMatcheados.map((item) => ({
+          ...item,
+          id: crypto.randomUUID(),
+        })),
+      ]);
+      toast.warning(
+        resultado.itemsNoMatcheados.length === 1
+          ? `"${resultado.itemsNoMatcheados[0].articuloBusqueda}" necesita que lo precises — revisa abajo`
+          : `${resultado.itemsNoMatcheados.length} ítems necesitan que los precises — revisa abajo`,
+      );
+    }
 
     // Si la captura trajo una o más anomalías, encolamos TODOS los ítems
     // anómalos de esta captura (no solo el primero) para que el modal los
@@ -215,6 +237,15 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
     setVoiceResetKey((k) => k + 1);
   }
 
+  function handleReintentarNoMatcheado(id: string) {
+    setNoMatcheadosCola((prev) => prev.filter((item) => item.id !== id));
+    setVoiceResetKey((k) => k + 1);
+  }
+
+  function handleDescartarNoMatcheado(id: string) {
+    setNoMatcheadosCola((prev) => prev.filter((item) => item.id !== id));
+  }
+
   function handleEstadoActualizado(estado: EstadoInventario) {
     setInventario((prev) => (prev ? { ...prev, estado } : prev));
   }
@@ -311,6 +342,12 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
             procesando={procesandoVoz}
             autoFocusTexto={voiceResetKey > 0}
             fuenteIA={ultimaFuenteIA}
+          />
+
+          <ItemsNoMatcheadosCard
+            items={noMatcheadosCola}
+            onReintentar={handleReintentarNoMatcheado}
+            onDescartar={handleDescartarNoMatcheado}
           />
         </div>
 
