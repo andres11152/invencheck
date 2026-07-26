@@ -4,10 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AlmacenRepository } from '../almacenes/almacen.repository';
-import {
-  ArticuloService,
-  type VoiceMatchResult,
-} from '../articulos/articulo.service';
+import { ArticuloService } from '../articulos/articulo.service';
+import { describirMotivoNoMatch } from '../articulos/articulo-text.util';
 import { AiEngineService, FuenteDictado } from '../ai-engine/ai-engine.service';
 import { AnomaliasService } from './services/anomalias.service';
 import {
@@ -20,6 +18,7 @@ import {
 } from '../../common/utils/unit-conversion.util';
 import {
   EstadoInventario,
+  type Prisma,
   TipoAlerta,
   type Articulo,
   type Inventario,
@@ -325,7 +324,7 @@ export class InventarioService {
           articuloBusqueda: item.articuloBusqueda,
           cantidadDictada: item.cantidad,
           unidadDictada: item.unidadDictada,
-          motivo: this.describirMotivoNoMatch(match),
+          motivo: describirMotivoNoMatch(match.candidatosAmbiguos),
           candidatos: match.candidatosAmbiguos?.map((a) => ({
             id: a.id,
             nombre: a.nombre,
@@ -443,56 +442,6 @@ export class InventarioService {
     };
   }
 
-  /**
-   * Cuando `normalizarEntradaHablada` no resuelve un artículo, distingue
-   * "no encontré nada parecido" de "encontré dos candidatos igual de
-   * seguros" — este segundo caso es justo lo que la auditoría real
-   * (`audit-voice-matching.ts`) mostró que hoy se auto-confirmaba en
-   * silencio contra el candidato equivocado 78/938 veces. En vez de
-   * adivinar, se le pide al operario ser más específico.
-   */
-  private describirMotivoNoMatch(match: VoiceMatchResult): string {
-    if (match.candidatosAmbiguos && match.candidatosAmbiguos.length > 0) {
-      const nombres = match.candidatosAmbiguos.map((a) => a.nombre);
-      const encabezado = nombres.map((n) => `"${n}"`).join(' o ');
-      return `Podría ser ${encabezado} — ${this.sugerenciaDesambiguacion(nombres)}`;
-    }
-    return 'Sin coincidencia en el catálogo de artículos';
-  }
-
-  /**
-   * Antes esto era un consejo genérico fijo ("sé más específico: color,
-   * tamaño o cantidad exacta") sin importar cuál fuera la ambigüedad real —
-   * inútil (y hasta engañoso) cuando lo que distingue a los candidatos no
-   * es color/tamaño sino, por ejemplo, "precocida" vs. cruda: un operario
-   * que sigue ese consejo al pie de la letra puede terminar re-dictando la
-   * misma frase ambigua una y otra vez sin saber qué palabra agregar.
-   * Calcula el prefijo que comparten los nombres candidatos y señala
-   * explícitamente qué le sobra a cada uno respecto a ese prefijo.
-   */
-  private sugerenciaDesambiguacion(nombres: string[]): string {
-    const tokenizados = nombres.map((n) => n.trim().split(/\s+/));
-    let prefijoLen = 0;
-    while (
-      tokenizados.every(
-        (t) =>
-          t[prefijoLen] !== undefined &&
-          t[prefijoLen] === tokenizados[0][prefijoLen],
-      )
-    ) {
-      prefijoLen++;
-    }
-
-    const pistas = tokenizados.map((tokens, i) => {
-      const distintivo = tokens.slice(prefijoLen).join(' ').toLowerCase();
-      return distintivo
-        ? `agrega "${distintivo}" si es "${nombres[i]}"`
-        : `dilo tal cual, sin agregar nada, si es "${nombres[i]}"`;
-    });
-
-    return pistas.join(', o ');
-  }
-
   private async validarInventarioEditable(
     inventarioId: string,
   ): Promise<Inventario> {
@@ -516,7 +465,20 @@ export class InventarioService {
    * entre ambos flujos es CÓMO se llega al `Articulo`, no qué se hace una
    * vez identificado.
    */
-  private async procesarLineaArticulo(params: {
+  /**
+   * Toda la secuencia de escritura (incrementar/sembrar el conteo, evaluar
+   * anomalías, crear alertas nuevas, cerrar las superadas) corre dentro de
+   * UNA sola transacción de Postgres — antes eran ~5 escrituras sueltas en
+   * secuencia; si cualquiera fallaba a mitad de camino (un timeout, una
+   * caída momentánea de la conexión), el ítem podía quedar marcado como
+   * anómalo sin ninguna alerta que lo explicara, o con una alerta
+   * apuntando a un ítem que nunca se terminó de actualizar. `$transaction`
+   * garantiza que se confirman todas juntas o ninguna — mismo patrón que
+   * ya usaba `crearAuditoriaCiega`, solo que antes no se aplicaba acá,
+   * que es la ruta de escritura más frecuente de toda la app (corre en
+   * cada dictado).
+   */
+  private procesarLineaArticulo(params: {
     inventarioId: string;
     almacenId: string;
     articulo: Articulo;
@@ -525,6 +487,23 @@ export class InventarioService {
     unidadDictada: UnidadMedida;
     scoreMatch: number;
   }): Promise<ItemProcesadoResumen> {
+    return this.inventarioRepository.ejecutarEnTransaccion((tx) =>
+      this.escribirLineaArticulo(params, tx),
+    );
+  }
+
+  private async escribirLineaArticulo(
+    params: {
+      inventarioId: string;
+      almacenId: string;
+      articulo: Articulo;
+      articuloBusqueda: string;
+      cantidadDictada: number;
+      unidadDictada: UnidadMedida;
+      scoreMatch: number;
+    },
+    tx: Prisma.TransactionClient,
+  ): Promise<ItemProcesadoResumen> {
     const {
       inventarioId,
       almacenId,
@@ -548,22 +527,28 @@ export class InventarioService {
     if (factor === undefined) {
       const mensaje = `Se dictó en ${unidadDictada} pero "${articulo.nombre}" se maneja en ${articulo.unidadEstd}; no hay conversión automática disponible.`;
       const itemInventario =
-        await this.inventarioRepository.marcarUnidadAmbigua({
-          inventarioId,
-          articuloId: articulo.id,
-          teoricoInicial: articulo.stockHistoricoAvg ?? 0,
-          cantidadDictada,
-          unidadDictada,
-          unidadEstd: articulo.unidadEstd,
-        });
-      await this.inventarioRepository.crearAlertas([
-        {
-          inventarioId,
-          itemInventarioId: itemInventario.id,
-          tipo: TipoAlerta.UNIDAD_AMBIGUA,
-          mensaje,
-        },
-      ]);
+        await this.inventarioRepository.marcarUnidadAmbigua(
+          {
+            inventarioId,
+            articuloId: articulo.id,
+            teoricoInicial: articulo.stockHistoricoAvg ?? 0,
+            cantidadDictada,
+            unidadDictada,
+            unidadEstd: articulo.unidadEstd,
+          },
+          tx,
+        );
+      await this.inventarioRepository.crearAlertas(
+        [
+          {
+            inventarioId,
+            itemInventarioId: itemInventario.id,
+            tipo: TipoAlerta.UNIDAD_AMBIGUA,
+            mensaje,
+          },
+        ],
+        tx,
+      );
 
       return {
         articuloBusqueda: params.articuloBusqueda,
@@ -580,13 +565,16 @@ export class InventarioService {
     }
 
     const delta = round2(cantidadDictada * factor);
-    const itemInventario = await this.inventarioRepository.incrementarConteo({
-      inventarioId,
-      articuloId: articulo.id,
-      delta,
-      unidadUsada: articulo.unidadEstd,
-      teoricoInicial: articulo.stockHistoricoAvg ?? 0,
-    });
+    const itemInventario = await this.inventarioRepository.incrementarConteo(
+      {
+        inventarioId,
+        articuloId: articulo.id,
+        delta,
+        unidadUsada: articulo.unidadEstd,
+        teoricoInicial: articulo.stockHistoricoAvg ?? 0,
+      },
+      tx,
+    );
 
     // El "patrón normal" para detectar anomalías debe ser el de ESTA
     // bodega, no un promedio global mezclado entre las ~48 bodegas del
@@ -599,6 +587,7 @@ export class InventarioService {
         articulo.id,
         almacenId,
         inventarioId,
+        tx,
       );
 
     // `unidadDictada: articulo.unidadEstd` porque `itemInventario.conteoFisico`
@@ -615,6 +604,7 @@ export class InventarioService {
     await this.inventarioRepository.actualizarEsAnomalia(
       itemInventario.id,
       evaluacion.esAnomalia,
+      tx,
     );
 
     if (evaluacion.alertas.length > 0) {
@@ -625,6 +615,7 @@ export class InventarioService {
           tipo: alerta.tipo,
           mensaje: alerta.mensaje,
         })),
+        tx,
       );
     }
 
@@ -636,6 +627,7 @@ export class InventarioService {
     await this.inventarioRepository.resolverAlertasSuperadas(
       itemInventario.id,
       evaluacion.alertas.map((alerta) => alerta.tipo),
+      tx,
     );
 
     return {

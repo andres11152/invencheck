@@ -143,3 +143,57 @@ export function normalizeSpokenText(texto: string): string {
     .join(' ')
     .trim();
 }
+
+/**
+ * Antes esto era un consejo genérico fijo ("sé más específico: color,
+ * tamaño o cantidad exacta") sin importar cuál fuera la ambigüedad real —
+ * inútil (y hasta engañoso) cuando lo que distingue a los candidatos no
+ * es color/tamaño sino, por ejemplo, "precocida" vs. cruda: un operario
+ * que sigue ese consejo al pie de la letra puede terminar re-dictando la
+ * misma frase ambigua una y otra vez sin saber qué palabra agregar.
+ * Calcula el prefijo que comparten los nombres candidatos y señala
+ * explícitamente qué le sobra a cada uno respecto a ese prefijo.
+ */
+function sugerenciaDesambiguacion(nombres: string[]): string {
+  const tokenizados = nombres.map((n) => n.trim().split(/\s+/));
+  let prefijoLen = 0;
+  while (
+    tokenizados.every(
+      (t) =>
+        t[prefijoLen] !== undefined &&
+        t[prefijoLen] === tokenizados[0][prefijoLen],
+    )
+  ) {
+    prefijoLen++;
+  }
+
+  const pistas = tokenizados.map((tokens, i) => {
+    const distintivo = tokens.slice(prefijoLen).join(' ').toLowerCase();
+    return distintivo
+      ? `agrega "${distintivo}" si es "${nombres[i]}"`
+      : `dilo tal cual, sin agregar nada, si es "${nombres[i]}"`;
+  });
+  return pistas.join(', o ');
+}
+
+/**
+ * Cuando `ArticuloService.normalizarEntradaHablada` no resuelve un
+ * artículo, distingue "no encontré nada parecido" de "encontré dos
+ * candidatos igual de seguros" — este segundo caso es justo lo que la
+ * auditoría real (`audit-voice-matching.ts`) mostró que hoy se
+ * auto-confirmaba en silencio contra el candidato equivocado 78/938
+ * veces. En vez de adivinar, se le pide al operario ser más específico.
+ * Toma solo los nombres de los candidatos (no el tipo `Articulo` completo
+ * de Prisma) para que este util de texto siga sin depender del cliente
+ * generado ni de ningún módulo por encima de `articulos`.
+ */
+export function describirMotivoNoMatch(
+  candidatosAmbiguos: Array<{ nombre: string }> | undefined,
+): string {
+  if (candidatosAmbiguos && candidatosAmbiguos.length > 0) {
+    const nombres = candidatosAmbiguos.map((a) => a.nombre);
+    const encabezado = nombres.map((n) => `"${n}"`).join(' o ');
+    return `Podría ser ${encabezado} — ${sugerenciaDesambiguacion(nombres)}`;
+  }
+  return 'Sin coincidencia en el catálogo de artículos';
+}

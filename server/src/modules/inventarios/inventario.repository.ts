@@ -72,9 +72,38 @@ export interface CrearAlertaInput {
   mensaje: string;
 }
 
+/**
+ * Cliente de Prisma dentro de una transacción interactiva
+ * (`prisma.$transaction(async (tx) => ...)`) — expone los mismos delegates
+ * por modelo (`tx.itemInventario`, `tx.alertaInventario`, ...) que
+ * `PrismaService`, pero ligado a la conexión/transacción en curso. Los
+ * métodos de escritura de abajo aceptan opcionalmente uno de estos en vez
+ * de usar siempre `this.prisma` directamente, para poder componerlos
+ * dentro de una sola transacción atómica cuando el llamador lo necesita
+ * (ver `ejecutarEnTransaccion` y su uso en
+ * `InventarioService.procesarLineaArticulo`).
+ */
+type ClientePrisma = Prisma.TransactionClient | PrismaService;
+
 @Injectable()
 export class InventarioRepository {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Corre `fn` dentro de una transacción interactiva de Postgres — todas
+   * las escrituras que `fn` haga con el `tx` que recibe se confirman
+   * juntas o se revierten juntas. Ver el comentario en
+   * `InventarioService.procesarLineaArticulo` sobre por qué su secuencia
+   * de escrituras (incrementar conteo, evaluar anomalía, crear/superar
+   * alertas) necesitaba esta garantía — antes, un fallo a mitad de camino
+   * podía dejar el ítem marcado como anómalo sin ninguna alerta que lo
+   * explicara, o viceversa.
+   */
+  ejecutarEnTransaccion<T>(
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return this.prisma.$transaction(fn);
+  }
 
   crearInventario(data: {
     almacenId: string;
@@ -125,8 +154,9 @@ export class InventarioRepository {
     articuloId: string,
     almacenId: string,
     excluirInventarioId: string,
+    client: ClientePrisma = this.prisma,
   ): Promise<number | null> {
-    const result = await this.prisma.itemInventario.aggregate({
+    const result = await client.itemInventario.aggregate({
       where: {
         articuloId,
         inventarioId: { not: excluirInventarioId },
@@ -173,8 +203,11 @@ export class InventarioRepository {
    * ya sumado (que este método devuelve), nunca contra un valor leído antes
    * del incremento.
    */
-  incrementarConteo(input: IncrementarConteoInput): Promise<ItemInventario> {
-    return this.prisma.itemInventario.upsert({
+  incrementarConteo(
+    input: IncrementarConteoInput,
+    client: ClientePrisma = this.prisma,
+  ): Promise<ItemInventario> {
+    return client.itemInventario.upsert({
       where: {
         inventarioId_articuloId: {
           inventarioId: input.inventarioId,
@@ -199,8 +232,9 @@ export class InventarioRepository {
   actualizarEsAnomalia(
     itemInventarioId: string,
     esAnomalia: boolean,
+    client: ClientePrisma = this.prisma,
   ): Promise<ItemInventario> {
-    return this.prisma.itemInventario.update({
+    return client.itemInventario.update({
       where: { id: itemInventarioId },
       data: { esAnomalia },
     });
@@ -234,8 +268,9 @@ export class InventarioRepository {
    */
   marcarUnidadAmbigua(
     input: MarcarUnidadAmbiguaInput,
+    client: ClientePrisma = this.prisma,
   ): Promise<ItemInventario> {
-    return this.prisma.itemInventario.upsert({
+    return client.itemInventario.upsert({
       where: {
         inventarioId_articuloId: {
           inventarioId: input.inventarioId,
@@ -257,45 +292,33 @@ export class InventarioRepository {
   /**
    * Dedupe contra alertas activas: dictar el mismo ítem otra vez mientras
    * sigue en el mismo estado problemático (misma unidad ambigua sin
-   * resolver, sigue desviado del histórico) llamaba a `crearAlertas` de
-   * nuevo en cada dictado — el operario terminaba viendo la MISMA anomalía
-   * duplicada N veces en el modal (bug real reportado). Antes de insertar,
-   * se descartan las que ya tienen una alerta activa (sin resolver Y sin
-   * revisar por auditor) del mismo tipo para el mismo ítem — una anomalía
-   * que ya se resolvió/revisó por completo sí puede volver a dispararse
-   * como una alerta NUEVA si el problema reaparece después.
+   * resolver, sigue desviado del histórico) no debe crear una alerta
+   * NUEVA — el operario terminaba viendo la MISMA anomalía duplicada N
+   * veces en el modal (bug real reportado).
+   *
+   * Antes esto se resolvía leyendo las alertas activas y filtrando en
+   * código de aplicación antes de insertar — un patrón *check-then-act*
+   * que no es atómico: dos dictados casi simultáneos del mismo ítem
+   * podían leer "0 activas" los dos antes de que cualquiera insertara,
+   * colando el mismo duplicado que el filtro intentaba evitar. Ahora la
+   * deduplicación la hace Postgres mismo, con un índice único parcial
+   * sobre (itemInventarioId, tipo) que solo aplica a filas activas (ver
+   * el modelo `AlertaInventario` en schema.prisma) — `skipDuplicates`
+   * hace que el insert que violaría ese índice se descarte en silencio
+   * en vez de fallar, sin importar el orden de llegada entre requests
+   * concurrentes. Una alerta ya resuelta+revisada por completo sí puede
+   * volver a dispararse como una alerta NUEVA si el problema reaparece
+   * después (esa fila ya no cuenta para el índice).
    */
-  async crearAlertas(alertas: CrearAlertaInput[]): Promise<number> {
+  async crearAlertas(
+    alertas: CrearAlertaInput[],
+    client: ClientePrisma = this.prisma,
+  ): Promise<number> {
     if (alertas.length === 0) return 0;
 
-    const itemIds = [
-      ...new Set(
-        alertas
-          .map((a) => a.itemInventarioId)
-          .filter((id): id is string => id !== undefined),
-      ),
-    ];
-    const activas =
-      itemIds.length > 0
-        ? await this.prisma.alertaInventario.findMany({
-            where: {
-              itemInventarioId: { in: itemIds },
-              OR: [{ resuelto: false }, { revisadoPorAuditor: false }],
-            },
-            select: { itemInventarioId: true, tipo: true },
-          })
-        : [];
-    const clavesActivas = new Set(
-      activas.map((a) => `${a.itemInventarioId}:${a.tipo}`),
-    );
-
-    const nuevas = alertas.filter(
-      (a) => !clavesActivas.has(`${a.itemInventarioId}:${a.tipo}`),
-    );
-    if (nuevas.length === 0) return 0;
-
-    const { count } = await this.prisma.alertaInventario.createMany({
-      data: nuevas,
+    const { count } = await client.alertaInventario.createMany({
+      data: alertas,
+      skipDuplicates: true,
     });
     return count;
   }
@@ -322,8 +345,9 @@ export class InventarioRepository {
   async resolverAlertasSuperadas(
     itemInventarioId: string,
     tiposVigentes: TipoAlerta[],
+    client: ClientePrisma = this.prisma,
   ): Promise<number> {
-    const { count } = await this.prisma.alertaInventario.updateMany({
+    const { count } = await client.alertaInventario.updateMany({
       where: {
         itemInventarioId,
         tipo: { notIn: tiposVigentes },

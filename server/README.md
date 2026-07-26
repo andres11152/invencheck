@@ -1,7 +1,7 @@
 # InvenCheck — Server
 
 [![CI](https://github.com/andres11152/invencheck/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/andres11152/invencheck/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-132%20unit%20%2B%2034%20e2e-blue)](test)
+[![tests](https://img.shields.io/badge/tests-142%20unit%20%2B%2043%20e2e-blue)](test)
 [![coverage threshold](https://img.shields.io/badge/coverage%20threshold-43%25%20stmts%20(CI--enforced)-success)](#tests)
 
 API REST de InvenCheck — NestJS 11 + Prisma 7 (driver adapters) + PostgreSQL. Sirve el catálogo de artículos, el flujo de toma física por voz, la detección de anomalías y los reportes de variación bajo el prefijo `/api`.
@@ -74,7 +74,7 @@ npm run test:e2e             # e2e contra Postgres real — ver setup abajo
 
 **Umbral de cobertura** (`jest.coverageThreshold` en `package.json`): 43% statements / 41% branches / 25% funciones / 42% líneas, sobre `src/` excluyendo el cliente Prisma generado, `*.module.ts` (wiring sin lógica) y `main.ts`. Se aplica con `test:cov` y falla el build en CI si baja. No es 100% a propósito — el objetivo es proteger la lógica de negocio real (anomalías, autorización, guards, agregaciones), no inflar el número con getters y DTOs.
 
-**e2e (`test/*.e2e-spec.ts`)** — 10 specs, 34 tests, contra Postgres real vía `Test.createTestingModule` + Supertest (no mocks): login, matching difuso (`pg_trgm`/`f_unaccent`, imposible de mockear con sentido) y su detección de ambigüedad, resolución exacta por SKU, números dictados/escritos con separador de miles ("15.000kg"), concurrencia de conteo (prueba que el `increment` atómico no pierde escrituras), el flujo central de bloqueo por anomalía (incluida la regresión de auto-resolución por el operario), autorización por rol, agregación de reportes, y los webhooks de integración ERP.
+**e2e (`test/*.e2e-spec.ts`)** — 15 specs, 43 tests, contra Postgres real vía `Test.createTestingModule` + Supertest (no mocks): login, matching difuso (`pg_trgm`/`f_unaccent`, imposible de mockear con sentido) y su detección de ambigüedad, selección manual de un candidato ambiguo por `articuloId`, resolución exacta por SKU, números dictados/escritos con separador de miles ("15.000kg"), mezcla de unidades ambiguas con dictados válidos posteriores, deduplicación y auto-resolución de alertas, una carrera concurrente real (10 dictados HTTP simultáneos del mismo ítem, `Promise.all`) que verifica que la deduplicación de alertas se sostiene a nivel de base de datos, concurrencia de conteo (prueba que el `increment` atómico no pierde escrituras), el flujo central de bloqueo por anomalía (incluida la regresión de auto-resolución por el operario), autorización por rol, agregación de reportes, y los webhooks de integración ERP.
 
 Setup local:
 ```bash
@@ -105,8 +105,9 @@ Cada módulo en `src/modules/` (`almacenes`, `articulos`, `ai-engine`, `inventar
 - **Integración ERP**: `POST /integration/webhook/sync-articulo`/`sync-almacen` usan `ApiKeyGuard` (header `X-Api-Key`) en vez de JWT — llamador sistema-a-sistema, no un usuario.
 - **Detección de anomalías** (`AnomaliasService.evaluarConteo`): unidad ambigua sin factor de conversión → `UNIDAD_AMBIGUA`; `teorico < 0` → `STOCK_NEGATIVO`; variación fuera de `[-80%, +200%]` vs. el promedio histórico de esa bodega (con fallback al promedio global) → `ANOMALIA_CANTIDAD`. Cualquier alerta sin resolver bloquea la transición a `CONCILIADO`/`ENVIADO_ERP`, verificado en `InventarioService.cambiarEstado`.
 - **Resolución de alertas, en dos pasos independientes** (`AlertaInventario.resuelto` vs. `revisadoPorAuditor`): `PATCH .../alertas/:id/resolver` es el auto-chequeo del operario que dictó (confirma que la cantidad no fue un error de dictado; deliberadamente sin restricción de rol) — pero por sí solo **ya no** desbloquea `cambiarEstado`. Hace falta además `PATCH .../alertas/:id/revisar`, restringido a `AUDITOR`/`ADMIN` y que guarda `revisadoPor`/`revisadoEn`. Antes de este cambio ambos pasos eran el mismo endpoint sin rol — cualquier OPERARIO podía cerrar su propia anomalía sin revisión independiente, confirmado empíricamente contra el server real y corregido (ver "Limitaciones conocidas").
-- **Concurrencia**: `InventarioRepository.incrementarConteo` usa `{ increment: delta }` atómico de Prisma, no leer-sumar-escribir — evita lost updates entre dictados simultáneos del mismo artículo.
+- **Concurrencia**: `InventarioRepository.incrementarConteo` usa `{ increment: delta }` atómico de Prisma, no leer-sumar-escribir — evita lost updates entre dictados simultáneos del mismo artículo. Toda la escritura de una línea contada (incremento, evaluación de anomalías, alertas) corre dentro de una transacción (`InventarioRepository.ejecutarEnTransaccion`), y la deduplicación de alertas activas (`crearAlertas`) ya no depende de un check-then-act en código de aplicación sino de un índice único parcial de Postgres sobre `(itemInventarioId, tipo)` + `skipDuplicates: true` — cierra a nivel de base de datos una carrera real que un test secuencial no puede reproducir (ver `alertas-carrera-concurrente.e2e-spec.ts`, que dispara 10 dictados HTTP genuinamente concurrentes).
 - **SQL crudo**: solo donde el query builder no alcanza — matching difuso (`articulo.repository.ts`, `pg_trgm` + `unaccent`) y el reporte agregado de variación (`reporte.repository.ts`), siempre vía `Prisma.sql` parametrizado.
+- **Selección manual de candidato ambiguo** (`POST /inventarios/:id/procesar-articulo`): cuando ninguna frase dictada puede distinguir dos candidatos sin reproducir la misma ambigüedad (un candidato es prefijo exacto del otro, ej. "PAPA CRIOLLA" / "PAPA CRIOLLA PRECOCIDA"), el cliente elige directamente por `articuloId`. El texto de desambiguación (`describirMotivoNoMatch`/`sugerenciaDesambiguacion`) vive en `articulo-text.util.ts` junto al resto de utilidades de texto de matching por voz, no en `InventarioService` — es interpretación de nombres de artículo, no orquestación de inventario.
 - **Dictado de voz**: `AiEngineService.procesarDictadoVoz` intenta Gemini (si `GEMINI_API_KEY` está seteada, con reintentos/backoff) y cae al parser local en español (`voice-parser.util.ts`) — el fallback real de la demo, no un stub. Gemini nunca manda el header HTTP `Retry-After` en un 429 — el `retryDelay` sugerido viene dentro del cuerpo JSON (`error.details[]`, `google.rpc.RetryInfo`), junto a un `google.rpc.QuotaFailure` que dice qué cuota se excedió; `parseGeminiRetryInfo` lee ambos para decidir si vale la pena reintentar (cuota corta, por minuto) o no (cuota diaria/mensual — ningún reintento en segundos la libera). El tier gratuito de Gemini para `gemini-3.6-flash` es de solo 20 solicitudes/día compartidas por toda la app — se agota con facilidad en cualquier sesión de uso real, y cada dictado después de eso cae al parser local (visible en el cliente como el badge "Modo sin IA").
 
 ## Estructura
@@ -120,7 +121,10 @@ src/
   scripts/         import-excel.ts — ingesta del catálogo real desde data/BODEGAS Y STOCK.xlsx
 prisma/
   schema.prisma
-  migrations/
+  migrations/      incluye una migración con SQL escrito a mano (índice único
+                   parcial sobre alertas activas — el DSL de Prisma no
+                   soporta `WHERE` en un índice único, ver comentario en
+                   schema.prisma junto a AlertaInventario)
   seed.ts
 test/
   *.e2e-spec.ts

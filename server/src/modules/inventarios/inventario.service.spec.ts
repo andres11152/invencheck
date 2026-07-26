@@ -426,3 +426,154 @@ describe('InventarioService.procesarTomaPorVoz — motivo de itemsNoMatcheados',
     );
   });
 });
+
+// Regresión de un hallazgo de la auditoría de arquitectura: la secuencia de
+// escritura de un conteo (incrementar/sembrar, evaluar anomalía, crear
+// alertas, resolver las superadas) eran ~5 escrituras sueltas en secuencia,
+// sin ninguna transacción — un fallo a mitad de camino podía dejar el ítem
+// y sus alertas inconsistentes entre sí. Ahora corren dentro de
+// `InventarioRepository.ejecutarEnTransaccion`, con el mismo patrón que ya
+// usaba `crearAuditoriaCiega`.
+describe('InventarioService.procesarTomaPorVoz — transaccionalidad de escritura', () => {
+  const TX_MARCADOR = { esLaTransaccion: true };
+
+  function buildService(opts: {
+    incrementarConteo?: jest.Mock;
+    actualizarEsAnomalia?: jest.Mock;
+    crearAlertas?: jest.Mock;
+    resolverAlertasSuperadas?: jest.Mock;
+    ejecutarEnTransaccion?: jest.Mock;
+  }) {
+    const itemInventario = {
+      id: 'item-1',
+      inventarioId: 'inv-1',
+      articuloId: 'art-1',
+      teorico: 10,
+      conteoFisico: 5,
+      unidadUsada: UnidadMedida.KILOGRAMO,
+      esAnomalia: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const ejecutarEnTransaccion =
+      opts.ejecutarEnTransaccion ??
+      jest.fn((fn: (tx: unknown) => Promise<unknown>) => fn(TX_MARCADOR));
+
+    const inventarioRepository = {
+      findById: jest.fn().mockResolvedValue(buildInventario()),
+      findDetalleById: jest.fn().mockResolvedValue(buildInventario()),
+      ejecutarEnTransaccion,
+      incrementarConteo:
+        opts.incrementarConteo ?? jest.fn().mockResolvedValue(itemInventario),
+      promedioHistoricoPorAlmacen: jest.fn().mockResolvedValue(null),
+      actualizarEsAnomalia:
+        opts.actualizarEsAnomalia ??
+        jest.fn().mockResolvedValue(itemInventario),
+      crearAlertas: opts.crearAlertas ?? jest.fn().mockResolvedValue(0),
+      resolverAlertasSuperadas:
+        opts.resolverAlertasSuperadas ?? jest.fn().mockResolvedValue(0),
+    } as unknown as InventarioRepository;
+
+    const articuloService = {
+      normalizarEntradaHablada: jest.fn().mockResolvedValue({
+        textoNormalizado: 'papa criolla',
+        articulo: buildArticulo({
+          id: 'art-1',
+          nombre: 'PAPA CRIOLLA',
+          unidadEstd: UnidadMedida.KILOGRAMO,
+        }),
+        score: 1,
+      }),
+    } as unknown as ArticuloService;
+    const aiEngineService = {
+      procesarDictadoVoz: jest.fn().mockResolvedValue({
+        items: [
+          {
+            articuloBusqueda: 'papa criolla',
+            cantidad: 5,
+            unidadDictada: UnidadMedida.KILOGRAMO,
+          },
+        ],
+        fuente: 'REGLAS_LOCALES',
+      }),
+    } as unknown as AiEngineService;
+    const anomaliasService = {
+      evaluarConteo: jest.fn().mockReturnValue({
+        conteoFisico: 5,
+        unidadUsada: UnidadMedida.KILOGRAMO,
+        esAnomalia: false,
+        alertas: [],
+      }),
+    } as unknown as AnomaliasService;
+
+    return new InventarioService(
+      inventarioRepository,
+      {} as unknown as AlmacenRepository,
+      articuloService,
+      aiEngineService,
+      anomaliasService,
+      {} as unknown as IntegrationErpService,
+    );
+  }
+
+  it('corre toda la secuencia de escritura dentro de ejecutarEnTransaccion', async () => {
+    const ejecutarEnTransaccion = jest.fn(
+      (fn: (tx: unknown) => Promise<unknown>) => fn(TX_MARCADOR),
+    );
+    const service = buildService({ ejecutarEnTransaccion });
+
+    await service.procesarTomaPorVoz('inv-1', '5 kilos de papa criolla');
+
+    expect(ejecutarEnTransaccion).toHaveBeenCalledTimes(1);
+  });
+
+  it('pasa el cliente de la transacción (no this.prisma directo) a cada escritura', async () => {
+    const incrementarConteo = jest.fn().mockResolvedValue({
+      id: 'item-1',
+      inventarioId: 'inv-1',
+      articuloId: 'art-1',
+      teorico: 10,
+      conteoFisico: 5,
+      unidadUsada: UnidadMedida.KILOGRAMO,
+      esAnomalia: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const actualizarEsAnomalia = jest.fn().mockResolvedValue({});
+    const resolverAlertasSuperadas = jest.fn().mockResolvedValue(0);
+    const service = buildService({
+      incrementarConteo,
+      actualizarEsAnomalia,
+      resolverAlertasSuperadas,
+    });
+
+    await service.procesarTomaPorVoz('inv-1', '5 kilos de papa criolla');
+
+    expect(incrementarConteo).toHaveBeenCalledWith(
+      expect.any(Object),
+      TX_MARCADOR,
+    );
+    expect(actualizarEsAnomalia).toHaveBeenCalledWith(
+      'item-1',
+      false,
+      TX_MARCADOR,
+    );
+    expect(resolverAlertasSuperadas).toHaveBeenCalledWith(
+      'item-1',
+      [],
+      TX_MARCADOR,
+    );
+  });
+
+  it('si una escritura falla a mitad de la secuencia, el error se propaga (no queda "a medias" en silencio)', async () => {
+    const actualizarEsAnomalia = jest
+      .fn()
+      .mockRejectedValue(new Error('timeout simulado de Postgres'));
+    const service = buildService({ actualizarEsAnomalia });
+
+    await expect(
+      service.procesarTomaPorVoz('inv-1', '5 kilos de papa criolla'),
+    ).rejects.toThrow('timeout simulado de Postgres');
+  });
+});

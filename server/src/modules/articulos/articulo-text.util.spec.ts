@@ -1,4 +1,8 @@
-import { buildAliases, normalizeSpokenText } from './articulo-text.util';
+import {
+  buildAliases,
+  describirMotivoNoMatch,
+  normalizeSpokenText,
+} from './articulo-text.util';
 
 describe('normalizeSpokenText', () => {
   it('quita unidad y conectores, dejando el nombre del artículo', () => {
@@ -96,5 +100,40 @@ describe('buildAliases', () => {
       'SALSA ROSADA CASERA CON AJI TOMATE CEBOLLA LARGA PISCILAGO EXTRA',
     );
     expect(aliases.length).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('describirMotivoNoMatch', () => {
+  it('reporta "sin coincidencia" cuando no hay candidatos ambiguos', () => {
+    expect(describirMotivoNoMatch(undefined)).toBe(
+      'Sin coincidencia en el catálogo de artículos',
+    );
+    expect(describirMotivoNoMatch([])).toBe(
+      'Sin coincidencia en el catálogo de artículos',
+    );
+  });
+
+  it('lista los nombres candidatos y sugiere qué agregar para distinguirlos', () => {
+    const motivo = describirMotivoNoMatch([
+      { nombre: 'CEBOLLA CABEZONA ROJA' },
+      { nombre: 'CEBOLLA CABEZONA BLANCA' },
+    ]);
+    expect(motivo).toContain('"CEBOLLA CABEZONA ROJA"');
+    expect(motivo).toContain('"CEBOLLA CABEZONA BLANCA"');
+    expect(motivo).toContain('agrega "roja"');
+    expect(motivo).toContain('agrega "blanca"');
+  });
+
+  it('cuando un candidato es prefijo exacto del otro, aclara que ese se dicta tal cual sin agregar nada', () => {
+    const motivo = describirMotivoNoMatch([
+      { nombre: 'PAPA CRIOLLA' },
+      { nombre: 'PAPA CRIOLLA PRECOCIDA' },
+    ]);
+    expect(motivo).toContain(
+      'dilo tal cual, sin agregar nada, si es "PAPA CRIOLLA"',
+    );
+    expect(motivo).toContain(
+      'agrega "precocida" si es "PAPA CRIOLLA PRECOCIDA"',
+    );
   });
 });

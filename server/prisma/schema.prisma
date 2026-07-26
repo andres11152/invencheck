@@ -186,5 +186,19 @@ model AlertaInventario {
 
   @@index([inventarioId])
   @@index([tipo])
+  // Además de estos índices, hay un ÍNDICE ÚNICO PARCIAL de Postgres sobre
+  // (itemInventarioId, tipo) — solo aplica a filas "activas" (NOT resuelto
+  // OR NOT revisadoPorAuditor). Garantiza a nivel de base de datos que no
+  // puede haber dos alertas activas del mismo tipo para el mismo ítem al
+  // mismo tiempo, cerrando una condición de carrera real: la deduplicación
+  // de `InventarioRepository.crearAlertas` antes vivía solo en código de
+  // aplicación (leer activas -> filtrar -> insertar), que no es atómico —
+  // dos dictados casi simultáneos del mismo ítem podían leer "0 activas"
+  // los dos antes de que cualquiera insertara. El DSL de Prisma no soporta
+  // índices únicos parciales (`WHERE`), así que este constraint vive SOLO
+  // en la migración SQL (ver
+  // prisma/migrations/*_alerta_activa_unica_index/migration.sql), no acá
+  // arriba — no lo borres en un `prisma db push`/reset sin revisar esa
+  // migración.
   @@map("alertas_inventario")
 }
