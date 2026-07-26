@@ -387,8 +387,42 @@ describe('InventarioService.procesarTomaPorVoz — motivo de itemsNoMatcheados',
     expect(resultado.itemsNoMatcheados[0].motivo).toContain(
       'CEBOLLA CABEZONA BLANCA',
     );
-    expect(resultado.itemsNoMatcheados[0].motivo).toContain(
-      'sé más específico',
+    // Regresión de un bug real reportado: el consejo era un genérico fijo
+    // ("sé más específico: color, tamaño o cantidad exacta") sin importar
+    // cuál fuera la ambigüedad real — un operario que re-dictaba la misma
+    // frase ambigua siguiendo ese consejo quedaba en loop porque nunca se
+    // le decía la palabra concreta que faltaba. Ahora debe nombrar la
+    // palabra distintiva real de cada candidato.
+    expect(resultado.itemsNoMatcheados[0].motivo).toContain('agrega "roja"');
+    expect(resultado.itemsNoMatcheados[0].motivo).toContain('agrega "blanca"');
+    expect(resultado.itemsNoMatcheados[0].motivo).not.toContain(
+      'color, tamaño',
+    );
+  });
+
+  it('cuando un candidato es prefijo exacto del otro, aclara que ese se dicta tal cual sin agregar nada (bug real: "papa criolla" vs. "papa criolla precocida")', async () => {
+    const cruda = buildArticulo({ id: 'art-cruda', nombre: 'PAPA CRIOLLA' });
+    const precocida = buildArticulo({
+      id: 'art-precocida',
+      nombre: 'PAPA CRIOLLA PRECOCIDA',
+    });
+    const service = buildService(
+      jest.fn().mockResolvedValue({
+        textoNormalizado: 'papa criolla',
+        articulo: null,
+        score: 1.25,
+        candidatosAmbiguos: [cruda, precocida],
+      }),
+    );
+
+    const resultado = await service.procesarTomaPorVoz('inv-1', 'papa criolla');
+
+    const motivo = resultado.itemsNoMatcheados[0].motivo;
+    expect(motivo).toContain(
+      'agrega "precocida" si es "PAPA CRIOLLA PRECOCIDA"',
+    );
+    expect(motivo).toContain(
+      'dilo tal cual, sin agregar nada, si es "PAPA CRIOLLA"',
     );
   });
 });

@@ -77,7 +77,12 @@ describe('POST /inventarios/:id/procesar-voz — ambigüedad real (e2e)', () => 
     expect(body.itemsNoMatcheados[0].motivo).toContain(
       'CEBOLLA CABEZONA BLANCA',
     );
-    expect(body.itemsNoMatcheados[0].motivo).toContain('más específico');
+    // Regresión de un bug real: el consejo antes era un genérico fijo
+    // ("sé más específico: color, tamaño o cantidad exacta") que no
+    // nombraba la palabra real que distingue a los candidatos — ahora debe
+    // decir explícitamente cuál agregar para cada uno.
+    expect(body.itemsNoMatcheados[0].motivo).toContain('agrega "roja"');
+    expect(body.itemsNoMatcheados[0].motivo).toContain('agrega "blanca"');
 
     // Verificación de que de verdad no quedó nada registrado en el inventario.
     const detalleRes = await agent(ctx.app)

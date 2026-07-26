@@ -402,12 +402,44 @@ export class InventarioService {
    */
   private describirMotivoNoMatch(match: VoiceMatchResult): string {
     if (match.candidatosAmbiguos && match.candidatosAmbiguos.length > 0) {
-      const nombres = match.candidatosAmbiguos
-        .map((a) => `"${a.nombre}"`)
-        .join(' o ');
-      return `Podría ser ${nombres} — sé más específico (ej. color, tamaño o cantidad exacta)`;
+      const nombres = match.candidatosAmbiguos.map((a) => a.nombre);
+      const encabezado = nombres.map((n) => `"${n}"`).join(' o ');
+      return `Podría ser ${encabezado} — ${this.sugerenciaDesambiguacion(nombres)}`;
     }
     return 'Sin coincidencia en el catálogo de artículos';
+  }
+
+  /**
+   * Antes esto era un consejo genérico fijo ("sé más específico: color,
+   * tamaño o cantidad exacta") sin importar cuál fuera la ambigüedad real —
+   * inútil (y hasta engañoso) cuando lo que distingue a los candidatos no
+   * es color/tamaño sino, por ejemplo, "precocida" vs. cruda: un operario
+   * que sigue ese consejo al pie de la letra puede terminar re-dictando la
+   * misma frase ambigua una y otra vez sin saber qué palabra agregar.
+   * Calcula el prefijo que comparten los nombres candidatos y señala
+   * explícitamente qué le sobra a cada uno respecto a ese prefijo.
+   */
+  private sugerenciaDesambiguacion(nombres: string[]): string {
+    const tokenizados = nombres.map((n) => n.trim().split(/\s+/));
+    let prefijoLen = 0;
+    while (
+      tokenizados.every(
+        (t) =>
+          t[prefijoLen] !== undefined &&
+          t[prefijoLen] === tokenizados[0][prefijoLen],
+      )
+    ) {
+      prefijoLen++;
+    }
+
+    const pistas = tokenizados.map((tokens, i) => {
+      const distintivo = tokens.slice(prefijoLen).join(' ').toLowerCase();
+      return distintivo
+        ? `agrega "${distintivo}" si es "${nombres[i]}"`
+        : `dilo tal cual, sin agregar nada, si es "${nombres[i]}"`;
+    });
+
+    return pistas.join(', o ');
   }
 
   private async validarInventarioEditable(
