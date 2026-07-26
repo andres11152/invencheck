@@ -1,7 +1,7 @@
 # InvenCheck — Server
 
 [![CI](https://github.com/andres11152/invencheck/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/andres11152/invencheck/actions/workflows/ci.yml)
-[![tests](https://img.shields.io/badge/tests-124%20unit%20%2B%2030%20e2e-blue)](test)
+[![tests](https://img.shields.io/badge/tests-132%20unit%20%2B%2034%20e2e-blue)](test)
 [![coverage threshold](https://img.shields.io/badge/coverage%20threshold-43%25%20stmts%20(CI--enforced)-success)](#tests)
 
 API REST de InvenCheck — NestJS 11 + Prisma 7 (driver adapters) + PostgreSQL. Sirve el catálogo de artículos, el flujo de toma física por voz, la detección de anomalías y los reportes de variación bajo el prefijo `/api`.
@@ -74,7 +74,7 @@ npm run test:e2e             # e2e contra Postgres real — ver setup abajo
 
 **Umbral de cobertura** (`jest.coverageThreshold` en `package.json`): 43% statements / 41% branches / 25% funciones / 42% líneas, sobre `src/` excluyendo el cliente Prisma generado, `*.module.ts` (wiring sin lógica) y `main.ts`. Se aplica con `test:cov` y falla el build en CI si baja. No es 100% a propósito — el objetivo es proteger la lógica de negocio real (anomalías, autorización, guards, agregaciones), no inflar el número con getters y DTOs.
 
-**e2e (`test/*.e2e-spec.ts`)** — 10 specs, 30 tests, contra Postgres real vía `Test.createTestingModule` + Supertest (no mocks): login, matching difuso (`pg_trgm`/`f_unaccent`, imposible de mockear con sentido) y su detección de ambigüedad, resolución exacta por SKU, números dictados/escritos con separador de miles ("15.000kg"), concurrencia de conteo (prueba que el `increment` atómico no pierde escrituras), el flujo central de bloqueo por anomalía, autorización por rol, agregación de reportes, y los webhooks de integración ERP.
+**e2e (`test/*.e2e-spec.ts`)** — 10 specs, 34 tests, contra Postgres real vía `Test.createTestingModule` + Supertest (no mocks): login, matching difuso (`pg_trgm`/`f_unaccent`, imposible de mockear con sentido) y su detección de ambigüedad, resolución exacta por SKU, números dictados/escritos con separador de miles ("15.000kg"), concurrencia de conteo (prueba que el `increment` atómico no pierde escrituras), el flujo central de bloqueo por anomalía (incluida la regresión de auto-resolución por el operario), autorización por rol, agregación de reportes, y los webhooks de integración ERP.
 
 Setup local:
 ```bash
@@ -101,12 +101,13 @@ La primera corrida (938 artículos) encontró 78 (8.3%) que resolvían en silenc
 
 Cada módulo en `src/modules/` (`almacenes`, `articulos`, `ai-engine`, `inventarios`, `reportes`, `integration`, `auth`, `health`) sigue **Controller → Service → Repository**. Los repositorios devuelven tipos derivados de Prisma vía `satisfies Prisma.XInclude` + `Prisma.XGetPayload<{...}>`, nunca interfaces declaradas a mano.
 
-- **Auth**: `JwtAuthGuard` global (`APP_GUARD`) — toda ruta exige JWT salvo `@Public()`. `RolesGuard` restringe `PATCH /inventarios/:id/estado` y `POST /inventarios/:id/auditoria-ciega` a `AUDITOR`/`ADMIN`. `usuarioId`/`auditorId` siempre se derivan del JWT vía `@CurrentUser()`, nunca del body.
+- **Auth**: `JwtAuthGuard` global (`APP_GUARD`) — toda ruta exige JWT salvo `@Public()`. `RolesGuard` restringe `PATCH /inventarios/:id/estado`, `POST /inventarios/:id/auditoria-ciega`, `GET /inventarios/:id/comparacion-auditoria` y `PATCH /inventarios/:id/alertas/:alertaId/revisar` a `AUDITOR`/`ADMIN`. `usuarioId`/`auditorId` siempre se derivan del JWT vía `@CurrentUser()`, nunca del body.
 - **Integración ERP**: `POST /integration/webhook/sync-articulo`/`sync-almacen` usan `ApiKeyGuard` (header `X-Api-Key`) en vez de JWT — llamador sistema-a-sistema, no un usuario.
 - **Detección de anomalías** (`AnomaliasService.evaluarConteo`): unidad ambigua sin factor de conversión → `UNIDAD_AMBIGUA`; `teorico < 0` → `STOCK_NEGATIVO`; variación fuera de `[-80%, +200%]` vs. el promedio histórico de esa bodega (con fallback al promedio global) → `ANOMALIA_CANTIDAD`. Cualquier alerta sin resolver bloquea la transición a `CONCILIADO`/`ENVIADO_ERP`, verificado en `InventarioService.cambiarEstado`.
+- **Resolución de alertas, en dos pasos independientes** (`AlertaInventario.resuelto` vs. `revisadoPorAuditor`): `PATCH .../alertas/:id/resolver` es el auto-chequeo del operario que dictó (confirma que la cantidad no fue un error de dictado; deliberadamente sin restricción de rol) — pero por sí solo **ya no** desbloquea `cambiarEstado`. Hace falta además `PATCH .../alertas/:id/revisar`, restringido a `AUDITOR`/`ADMIN` y que guarda `revisadoPor`/`revisadoEn`. Antes de este cambio ambos pasos eran el mismo endpoint sin rol — cualquier OPERARIO podía cerrar su propia anomalía sin revisión independiente, confirmado empíricamente contra el server real y corregido (ver "Limitaciones conocidas").
 - **Concurrencia**: `InventarioRepository.incrementarConteo` usa `{ increment: delta }` atómico de Prisma, no leer-sumar-escribir — evita lost updates entre dictados simultáneos del mismo artículo.
 - **SQL crudo**: solo donde el query builder no alcanza — matching difuso (`articulo.repository.ts`, `pg_trgm` + `unaccent`) y el reporte agregado de variación (`reporte.repository.ts`), siempre vía `Prisma.sql` parametrizado.
-- **Dictado de voz**: `AiEngineService.procesarDictadoVoz` intenta Gemini (si `GEMINI_API_KEY` está seteada, con reintentos/backoff) y cae al parser local en español (`voice-parser.util.ts`) — el fallback real de la demo, no un stub.
+- **Dictado de voz**: `AiEngineService.procesarDictadoVoz` intenta Gemini (si `GEMINI_API_KEY` está seteada, con reintentos/backoff) y cae al parser local en español (`voice-parser.util.ts`) — el fallback real de la demo, no un stub. Gemini nunca manda el header HTTP `Retry-After` en un 429 — el `retryDelay` sugerido viene dentro del cuerpo JSON (`error.details[]`, `google.rpc.RetryInfo`), junto a un `google.rpc.QuotaFailure` que dice qué cuota se excedió; `parseGeminiRetryInfo` lee ambos para decidir si vale la pena reintentar (cuota corta, por minuto) o no (cuota diaria/mensual — ningún reintento en segundos la libera). El tier gratuito de Gemini para `gemini-3.6-flash` es de solo 20 solicitudes/día compartidas por toda la app — se agota con facilidad en cualquier sesión de uso real, y cada dictado después de eso cae al parser local (visible en el cliente como el badge "Modo sin IA").
 
 ## Estructura
 

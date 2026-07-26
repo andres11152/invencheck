@@ -8,7 +8,9 @@ import type { AnomaliasService } from './services/anomalias.service';
 import type { IntegrationErpService } from '../integration/integration-erp.service';
 import {
   EstadoInventario,
+  TipoAlerta,
   UnidadMedida,
+  type AlertaInventario,
   type Articulo,
   type Inventario,
 } from '../../generated/prisma/client';
@@ -158,6 +160,130 @@ describe('InventarioService.cambiarEstado', () => {
     expect(enviarInventarioAERP).toHaveBeenCalledWith('inv-1');
     expect(cambiarEstado).not.toHaveBeenCalled();
     expect(result.estado).toBe(EstadoInventario.ENVIADO_ERP);
+  });
+});
+
+function buildAlerta(
+  overrides: Partial<AlertaInventario> = {},
+): AlertaInventario {
+  return {
+    id: 'alerta-1',
+    inventarioId: 'inv-1',
+    itemInventarioId: 'item-1',
+    tipo: TipoAlerta.ANOMALIA_CANTIDAD,
+    mensaje: 'Conteo se desvía 900% del histórico',
+    resuelto: false,
+    revisadoPorAuditor: false,
+    revisadoPor: null,
+    revisadoEn: null,
+    createdAt: new Date(),
+    ...overrides,
+  };
+}
+
+// Auto-chequeo del operario (`resolverAlerta`, sin restricción de rol) vs. el
+// gate real de auditoría (`revisarAlerta`, restringido a AUDITOR/ADMIN por
+// `@Roles` en el controller, no acá) — regresión del hallazgo de que un
+// OPERARIO podía auto-resolver su propia anomalía sin ninguna revisión
+// independiente.
+describe('InventarioService.resolverAlerta / revisarAlerta', () => {
+  function buildService(opts: {
+    findAlerta?: jest.Mock;
+    resolverAlerta?: jest.Mock;
+    revisarAlerta?: jest.Mock;
+  }) {
+    const inventarioRepository = {
+      findAlerta: opts.findAlerta ?? jest.fn().mockResolvedValue(buildAlerta()),
+      resolverAlerta:
+        opts.resolverAlerta ??
+        jest.fn().mockResolvedValue(buildAlerta({ resuelto: true })),
+      revisarAlerta:
+        opts.revisarAlerta ??
+        jest
+          .fn()
+          .mockResolvedValue(
+            buildAlerta({ revisadoPorAuditor: true, revisadoPor: 'auditor-1' }),
+          ),
+    } as unknown as InventarioRepository;
+
+    return new InventarioService(
+      inventarioRepository,
+      {} as unknown as AlmacenRepository,
+      {} as unknown as ArticuloService,
+      {} as unknown as AiEngineService,
+      {} as unknown as AnomaliasService,
+      {} as unknown as IntegrationErpService,
+    );
+  }
+
+  it('resolverAlerta lanza 404 si la alerta no existe', async () => {
+    const service = buildService({
+      findAlerta: jest.fn().mockResolvedValue(null),
+    });
+    await expect(service.resolverAlerta('inv-1', 'no-existe')).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it('resolverAlerta lanza 404 si la alerta pertenece a otro inventario', async () => {
+    const service = buildService({
+      findAlerta: jest
+        .fn()
+        .mockResolvedValue(buildAlerta({ inventarioId: 'otro-inventario' })),
+    });
+    await expect(service.resolverAlerta('inv-1', 'alerta-1')).rejects.toThrow(
+      NotFoundException,
+    );
+  });
+
+  it('resolverAlerta delega en el repositorio cuando la alerta pertenece al inventario', async () => {
+    const resolverAlerta = jest
+      .fn()
+      .mockResolvedValue(buildAlerta({ resuelto: true }));
+    const service = buildService({ resolverAlerta });
+
+    const result = await service.resolverAlerta('inv-1', 'alerta-1');
+
+    expect(resolverAlerta).toHaveBeenCalledWith('alerta-1');
+    expect(result.resuelto).toBe(true);
+  });
+
+  it('revisarAlerta lanza 404 si la alerta no existe', async () => {
+    const service = buildService({
+      findAlerta: jest.fn().mockResolvedValue(null),
+    });
+    await expect(
+      service.revisarAlerta('inv-1', 'no-existe', 'auditor-1'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('revisarAlerta lanza 404 si la alerta pertenece a otro inventario', async () => {
+    const service = buildService({
+      findAlerta: jest
+        .fn()
+        .mockResolvedValue(buildAlerta({ inventarioId: 'otro-inventario' })),
+    });
+    await expect(
+      service.revisarAlerta('inv-1', 'alerta-1', 'auditor-1'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('revisarAlerta delega en el repositorio pasando el id del auditor', async () => {
+    const revisarAlerta = jest
+      .fn()
+      .mockResolvedValue(
+        buildAlerta({ revisadoPorAuditor: true, revisadoPor: 'auditor-1' }),
+      );
+    const service = buildService({ revisarAlerta });
+
+    const result = await service.revisarAlerta(
+      'inv-1',
+      'alerta-1',
+      'auditor-1',
+    );
+
+    expect(revisarAlerta).toHaveBeenCalledWith('alerta-1', 'auditor-1');
+    expect(result.revisadoPorAuditor).toBe(true);
   });
 });
 

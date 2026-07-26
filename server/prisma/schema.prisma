@@ -170,7 +170,18 @@ model AlertaInventario {
   itemInventario   ItemInventario? @relation(fields: [itemInventarioId], references: [id])
   tipo             TipoAlerta
   mensaje          String
+  // Auto-chequeo del OPERARIO: confirma en el momento que la cantidad
+  // dictada fue correcta (no un error de dictado). NO es el control de
+  // auditoría — cualquier usuario autenticado puede setearlo, ver el
+  // comentario sobre segregación de funciones en InventarioController.
   resuelto         Boolean         @default(false)
+  // Control de auditoría real: solo un AUDITOR/ADMIN distinto de quien contó
+  // puede marcarlo (RolesGuard en InventarioController). `cambiarEstado`
+  // exige resuelto=true Y revisadoPorAuditor=true para cerrar el inventario
+  // — así el operario no puede auto-aprobar sus propias anomalías.
+  revisadoPorAuditor Boolean       @default(false)
+  revisadoPor      String?
+  revisadoEn       DateTime?
   createdAt        DateTime        @default(now())
 
   @@index([inventarioId])

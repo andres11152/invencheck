@@ -133,7 +133,7 @@ export class InventarioService {
         await this.inventarioRepository.contarAlertasActivas(id);
       if (alertasActivas > 0) {
         throw new BadRequestException(
-          `No se puede consolidar: hay ${alertasActivas} alerta(s) sin confirmar. Revisa las anomalías antes de cerrar el inventario.`,
+          `No se puede consolidar: hay ${alertasActivas} alerta(s) pendiente(s) — falta que el operario las confirme o que un auditor las revise.`,
         );
       }
     }
@@ -245,6 +245,19 @@ export class InventarioService {
     return { original, auditoria, items };
   }
 
+  /**
+   * Auto-chequeo del OPERARIO: confirma en el momento que la cantidad
+   * dictada fue correcta (no un error de dictado/typo). Deliberadamente NO
+   * está restringido a un rol — es el mismo usuario que contó, respondiendo
+   * al modal de anomalía en su propio dispositivo justo después de dictar.
+   *
+   * Esto NO es el control de auditoría: por sí solo, `resuelto: true` ya NO
+   * alcanza para desbloquear `cambiarEstado` a CONCILIADO/ENVIADO_ERP (ver
+   * `contarAlertasActivas`) — hace falta además que un AUDITOR/ADMIN llame a
+   * `revisarAlerta`. Antes de este cambio, este método era el ÚNICO gate y
+   * cualquier OPERARIO podía cerrar sus propias alertas sin revisión
+   * independiente — confirmado empíricamente y corregido.
+   */
   async resolverAlerta(inventarioId: string, alertaId: string) {
     const alerta = await this.inventarioRepository.findAlerta(alertaId);
     if (!alerta || alerta.inventarioId !== inventarioId) {
@@ -253,6 +266,26 @@ export class InventarioService {
       );
     }
     return this.inventarioRepository.resolverAlerta(alertaId);
+  }
+
+  /**
+   * Control de auditoría real: un AUDITOR/ADMIN revisa una alerta y la marca
+   * como tal (rol impuesto por `@Roles` en el controller, no aquí). Guarda
+   * quién y cuándo para dejar rastro — antes no existía ningún campo de
+   * auditoría en `AlertaInventario` más allá del booleano `resuelto`.
+   */
+  async revisarAlerta(
+    inventarioId: string,
+    alertaId: string,
+    auditorId: string,
+  ) {
+    const alerta = await this.inventarioRepository.findAlerta(alertaId);
+    if (!alerta || alerta.inventarioId !== inventarioId) {
+      throw new NotFoundException(
+        `Alerta ${alertaId} no encontrada en el inventario ${inventarioId}`,
+      );
+    }
+    return this.inventarioRepository.revisarAlerta(alertaId, auditorId);
   }
 
   /**

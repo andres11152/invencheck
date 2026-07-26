@@ -26,6 +26,13 @@ interface InventarioDetalleBody {
  * El flujo de negocio central de la app (ver CLAUDE.md): una anomalía sin
  * resolver debe bloquear la consolidación del inventario, verificado del
  * lado del servidor — no solo deshabilitado en el cliente.
+ *
+ * Desde el hallazgo de que un OPERARIO podía auto-resolver su propia
+ * anomalía (confirmado empíricamente contra el server real: PATCH .../resolver
+ * sin @Roles devolvía 200 con el token del propio operario), el bloqueo es
+ * de DOS pasos: `resolver` (auto-chequeo del operario, cualquier usuario) +
+ * `revisar` (gate real, solo AUDITOR/ADMIN). Ninguno de los dos por
+ * separado desbloquea `cambiarEstado` — hacen falta ambos.
  */
 describe('Bloqueo de consolidación por anomalía (e2e)', () => {
   let ctx: TestAppContext;
@@ -42,7 +49,7 @@ describe('Bloqueo de consolidación por anomalía (e2e)', () => {
     await truncateAll(ctx.prisma);
   });
 
-  it('una alerta sin resolver bloquea CONCILIADO; resolverla desbloquea la transición', async () => {
+  async function crearInventarioConAnomalia() {
     const operario = await loginAs(ctx, RolUsuario.OPERARIO);
     const auditor = await loginAs(ctx, RolUsuario.AUDITOR);
 
@@ -74,35 +81,82 @@ describe('Bloqueo de consolidación por anomalía (e2e)', () => {
     expect(procesado.itemsMatcheados).toHaveLength(1);
     expect(procesado.itemsMatcheados[0].esAnomalia).toBe(true);
 
-    // Bloqueado: la anomalía sigue sin resolver.
-    await agent(ctx.app)
-      .patch(`/api/inventarios/${inventario.id}/estado`)
-      .set('Authorization', `Bearer ${auditor.token}`)
-      .send({ estado: 'CONCILIADO' })
-      .expect(400);
-
     const detalleRes = await agent(ctx.app)
       .get(`/api/inventarios/${inventario.id}`)
       .set('Authorization', `Bearer ${auditor.token}`)
       .expect(200);
     const detalleConAlerta = detalleRes.body as InventarioDetalleBody;
-
     expect(detalleConAlerta.alertas.length).toBeGreaterThan(0);
-    const alertaId = detalleConAlerta.alertas[0].id;
+
+    return {
+      operario,
+      auditor,
+      inventarioId: inventario.id,
+      alertaId: detalleConAlerta.alertas[0].id,
+    };
+  }
+
+  it('bloqueado sin resolver; resolver+revisar (ambos) desbloquea la transición', async () => {
+    const { auditor, inventarioId, alertaId } =
+      await crearInventarioConAnomalia();
+
+    // Bloqueado: la anomalía sigue sin resolver ni revisar.
+    await agent(ctx.app)
+      .patch(`/api/inventarios/${inventarioId}/estado`)
+      .set('Authorization', `Bearer ${auditor.token}`)
+      .send({ estado: 'CONCILIADO' })
+      .expect(400);
 
     await agent(ctx.app)
-      .patch(`/api/inventarios/${inventario.id}/alertas/${alertaId}/resolver`)
+      .patch(`/api/inventarios/${inventarioId}/alertas/${alertaId}/resolver`)
+      .set('Authorization', `Bearer ${auditor.token}`)
+      .expect(200);
+
+    // Todavía bloqueado: falta la revisión de auditoría.
+    await agent(ctx.app)
+      .patch(`/api/inventarios/${inventarioId}/estado`)
+      .set('Authorization', `Bearer ${auditor.token}`)
+      .send({ estado: 'CONCILIADO' })
+      .expect(400);
+
+    await agent(ctx.app)
+      .patch(`/api/inventarios/${inventarioId}/alertas/${alertaId}/revisar`)
       .set('Authorization', `Bearer ${auditor.token}`)
       .expect(200);
 
     // Desbloqueado: ya no quedan alertas activas.
     const consolidarRes = await agent(ctx.app)
-      .patch(`/api/inventarios/${inventario.id}/estado`)
+      .patch(`/api/inventarios/${inventarioId}/estado`)
       .set('Authorization', `Bearer ${auditor.token}`)
       .send({ estado: 'CONCILIADO' })
       .expect(200);
     const consolidado = consolidarRes.body as InventarioBody;
 
     expect(consolidado.estado).toBe('CONCILIADO');
+  });
+
+  it('un OPERARIO puede auto-confirmar (resolver) pero NO puede revisar su propia anomalía (403)', async () => {
+    const { operario, inventarioId, alertaId } =
+      await crearInventarioConAnomalia();
+
+    // El auto-chequeo del operario sigue permitido (no requiere rol).
+    await agent(ctx.app)
+      .patch(`/api/inventarios/${inventarioId}/alertas/${alertaId}/resolver`)
+      .set('Authorization', `Bearer ${operario.token}`)
+      .expect(200);
+
+    // Pero el gate real de auditoría está vedado para el propio operario:
+    // regresión directa del hallazgo de auto-resolución sin control.
+    await agent(ctx.app)
+      .patch(`/api/inventarios/${inventarioId}/alertas/${alertaId}/revisar`)
+      .set('Authorization', `Bearer ${operario.token}`)
+      .expect(403);
+
+    // Y por lo tanto tampoco puede consolidar por su cuenta.
+    await agent(ctx.app)
+      .patch(`/api/inventarios/${inventarioId}/estado`)
+      .set('Authorization', `Bearer ${operario.token}`)
+      .send({ estado: 'CONCILIADO' })
+      .expect(403);
   });
 });

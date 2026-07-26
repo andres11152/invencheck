@@ -86,4 +86,35 @@ describe('Autorización por rol (e2e)', () => {
       .set('Authorization', `Bearer ${admin.token}`)
       .expect(201);
   });
+
+  it('OPERARIO recibe 403 en GET /inventarios/:id/comparacion-auditoria', async () => {
+    const inventario = await crearInventarioComo(operario.token);
+
+    await agent(ctx.app)
+      .get(`/api/inventarios/${inventario.id}/comparacion-auditoria`)
+      .set('Authorization', `Bearer ${operario.token}`)
+      .expect(403);
+  });
+
+  it('AUDITOR puede hacer GET /inventarios/:id/comparacion-auditoria', async () => {
+    const inventario = await crearInventarioComo(operario.token);
+
+    await agent(ctx.app)
+      .get(`/api/inventarios/${inventario.id}/comparacion-auditoria`)
+      .set('Authorization', `Bearer ${auditor.token}`)
+      .expect(200);
+  });
+
+  // Regresión del hallazgo de auto-resolución: `resolverAlerta` (auto-chequeo
+  // del operario) sigue abierto para cualquier rol, pero `revisarAlerta` (el
+  // gate real que desbloquea `cambiarEstado`) exige AUDITOR/ADMIN — ver
+  // `anomalia-blocking.e2e-spec.ts` para el flujo completo end-to-end.
+  it('OPERARIO recibe 403 en PATCH /inventarios/:id/alertas/:alertaId/revisar', async () => {
+    const inventario = await crearInventarioComo(operario.token);
+
+    await agent(ctx.app)
+      .patch(`/api/inventarios/${inventario.id}/alertas/no-existe/revisar`)
+      .set('Authorization', `Bearer ${operario.token}`)
+      .expect(403);
+  });
 });

@@ -57,9 +57,27 @@ export class InventarioController {
     return this.inventarioService.cambiarEstado(id, dto.estado);
   }
 
+  // Auto-chequeo del operario que dictó (confirma que la cantidad no fue un
+  // error de dictado) — deliberadamente SIN @Roles, ver el comentario en
+  // InventarioService.resolverAlerta. NO es el gate de auditoría: ya no
+  // alcanza por sí solo para desbloquear cambiarEstado, ver `revisarAlerta`.
   @Patch(':id/alertas/:alertaId/resolver')
   resolverAlerta(@Param('id') id: string, @Param('alertaId') alertaId: string) {
     return this.inventarioService.resolverAlerta(id, alertaId);
+  }
+
+  // Este es el gate real de segregación de funciones para las alertas: solo
+  // un AUDITOR/ADMIN puede revisarlas. Antes de este cambio no existía este
+  // endpoint y `resolverAlerta` (sin rol) era el único mecanismo — cualquier
+  // OPERARIO podía cerrar su propia anomalía sin revisión independiente.
+  @Roles(RolUsuario.AUDITOR, RolUsuario.ADMIN)
+  @Patch(':id/alertas/:alertaId/revisar')
+  revisarAlerta(
+    @Param('id') id: string,
+    @Param('alertaId') alertaId: string,
+    @CurrentUser() usuario: AuthenticatedUser,
+  ) {
+    return this.inventarioService.revisarAlerta(id, alertaId, usuario.id);
   }
 
   @Roles(RolUsuario.AUDITOR, RolUsuario.ADMIN)
@@ -71,6 +89,10 @@ export class InventarioController {
     return this.inventarioService.crearAuditoriaCiega(id, usuario.id);
   }
 
+  // Ver la comparación revela el conteo del auditor de la auditoría ciega —
+  // restringido igual que crearAuditoriaCiega, para que el operario original
+  // no pueda consultarlo mientras la auditoría sigue en curso.
+  @Roles(RolUsuario.AUDITOR, RolUsuario.ADMIN)
   @Get(':id/comparacion-auditoria')
   compararAuditoria(@Param('id') id: string) {
     return this.inventarioService.compararAuditoria(id);

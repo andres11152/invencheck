@@ -144,6 +144,13 @@ export const api = {
       method: "PATCH",
     }),
 
+  // Solo AUDITOR/ADMIN (RolesGuard en el servidor); es el gate real que
+  // desbloquea cambiarEstado, distinto del auto-chequeo de resolverAlerta.
+  revisarAlerta: (inventarioId: string, alertaId: string) =>
+    request<AlertaInventario>(`/inventarios/${inventarioId}/alertas/${alertaId}/revisar`, {
+      method: "PATCH",
+    }),
+
   crearAuditoriaCiega: (id: string) =>
     request<Inventario>(`/inventarios/${id}/auditoria-ciega`, {
       method: "POST",

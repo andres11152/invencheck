@@ -39,6 +39,13 @@ class GeminiHttpError extends Error {
     message: string,
     public readonly status: number,
     public readonly retryAfterMs: number | null,
+    /**
+     * true si la violación de cuota es diaria/mensual (`quotaId` contiene
+     * "PerDay"/"PerMonth") — un reintento en segundos NUNCA la libera, sin
+     * importar qué diga `retryDelay`. false para límites de ráfaga
+     * (por minuto/segundo), donde sí vale la pena esperar y reintentar.
+     */
+    public readonly esCuotaDiariaOMensual: boolean = false,
   ) {
     super(message);
     this.name = 'GeminiHttpError';
@@ -46,12 +53,64 @@ class GeminiHttpError extends Error {
 }
 
 /** `Retry-After` puede venir como segundos ("30") o como fecha HTTP — soporta ambos formatos. */
-function parseRetryAfterMs(header: string): number | null {
+function parseRetryAfterHeader(header: string): number | null {
   const segundos = Number(header);
   if (Number.isFinite(segundos)) return Math.max(0, segundos * 1000);
   const fecha = Date.parse(header);
   if (!Number.isNaN(fecha)) return Math.max(0, fecha - Date.now());
   return null;
+}
+
+interface GeminiErrorBody {
+  error?: {
+    message?: string;
+    details?: Array<{
+      '@type'?: string;
+      retryDelay?: string;
+      violations?: Array<{ quotaId?: string; quotaMetric?: string }>;
+    }>;
+  };
+}
+
+/**
+ * Gemini NUNCA manda el header HTTP `Retry-After` en un 429 — el tiempo de
+ * espera sugerido viene dentro del cuerpo JSON, en
+ * `error.details[]` como un objeto `google.rpc.RetryInfo` (`retryDelay:
+ * "4s"`), junto a un `google.rpc.QuotaFailure` que indica qué cuota se
+ * excedió. Antes de este fix solo se miraba el header (siempre ausente), así
+ * que NINGÚN 429 de Gemini se reintentaba jamás, incluidos los límites de
+ * ráfaga (por minuto/segundo) donde sí hubiera valido la pena esperar los
+ * pocos segundos que Gemini mismo sugiere.
+ */
+function parseGeminiRetryInfo(bodyText: string): {
+  retryAfterMs: number | null;
+  esCuotaDiariaOMensual: boolean;
+} {
+  try {
+    const body = JSON.parse(bodyText) as GeminiErrorBody;
+    const details = body.error?.details ?? [];
+
+    let retryAfterMs: number | null = null;
+    const retryInfo = details.find(
+      (d) => d['@type'] === 'type.googleapis.com/google.rpc.RetryInfo',
+    );
+    if (retryInfo?.retryDelay) {
+      const match = /^(\d+(?:\.\d+)?)s$/.exec(retryInfo.retryDelay);
+      if (match) retryAfterMs = Math.round(Number(match[1]) * 1000);
+    }
+
+    const quotaFailure = details.find(
+      (d) => d['@type'] === 'type.googleapis.com/google.rpc.QuotaFailure',
+    );
+    const quotaIds = (quotaFailure?.violations ?? [])
+      .map((v) => `${v.quotaId ?? ''} ${v.quotaMetric ?? ''}`)
+      .join(' ');
+    const esCuotaDiariaOMensual = /PerDay|PerMonth/i.test(quotaIds);
+
+    return { retryAfterMs, esCuotaDiariaOMensual };
+  } catch {
+    return { retryAfterMs: null, esCuotaDiariaOMensual: false };
+  }
 }
 
 /**
@@ -62,13 +121,16 @@ function parseRetryAfterMs(header: string): number | null {
  * Estrategia de resiliencia para Gemini:
  *  - Errores 5xx transitorios: hasta GEMINI_MAX_RETRIES reintentos con
  *    backoff exponencial + jitter.
- *  - 429 (rate limit / cuota agotada): si Gemini manda `Retry-After`, se
- *    espera exactamente eso (topado a RETRY_AFTER_MAX_MS) y se reintenta
- *    una vez; si no manda `Retry-After`, NO se reintenta con el backoff
- *    genérico — la cuota de Gemini suele resetear por minuto/día, así que
- *    unos pocos cientos de ms a segundos de backoff no la liberan, y
- *    reintentar solo alarga la espera del operario para terminar cayendo
- *    al parser local de todas formas.
+ *  - 429 (rate limit / cuota agotada): Gemini NUNCA manda el header HTTP
+ *    `Retry-After` — el tiempo sugerido viene en el CUERPO JSON
+ *    (`error.details[]`, objeto `google.rpc.RetryInfo.retryDelay`), junto a
+ *    un `google.rpc.QuotaFailure` que indica qué cuota se excedió (ver
+ *    `parseGeminiRetryInfo`). Si esa cuota es diaria/mensual
+ *    (`quotaId`/`quotaMetric` con "PerDay"/"PerMonth"), NINGÚN reintento la
+ *    libera antes de que resetee — se cae directo al parser local sin
+ *    gastar ni un intento. Si es un límite corto (por minuto/segundo, sin
+ *    ese patrón en el quotaId), se espera el `retryDelay` indicado (topado a
+ *    RETRY_AFTER_MAX_MS) y se reintenta.
  *  - Si se agotan los reintentos o el error no es reintentable, fallback
  *    transparente al parser local.
  */
@@ -140,9 +202,15 @@ export class AiEngineService {
             );
             throw lastError;
           }
+          if (lastError.status === 429 && lastError.esCuotaDiariaOMensual) {
+            this.logger.warn(
+              `Gemini devolvió 429 por cuota DIARIA/MENSUAL agotada — ningún reintento la libera antes de que resetee, se cae al parser local: ${lastError.message}`,
+            );
+            throw lastError;
+          }
           if (lastError.status === 429 && lastError.retryAfterMs === null) {
             this.logger.warn(
-              `Gemini devolvió 429 (rate limit) sin header Retry-After — no tiene sentido reintentar con backoff genérico, se cae al parser local: ${lastError.message}`,
+              `Gemini devolvió 429 sin ningún retryDelay reconocible (ni header ni cuerpo) — no tiene sentido reintentar a ciegas, se cae al parser local: ${lastError.message}`,
             );
             throw lastError;
           }
@@ -207,14 +275,21 @@ export class AiEngineService {
     });
 
     if (!response.ok) {
+      const bodyText = await response.text();
+      // Gemini no manda `Retry-After` como header (ver parseGeminiRetryInfo);
+      // el header se revisa igual por si algún día empieza a mandarlo, o
+      // para no depender únicamente del formato de cuerpo de un proveedor.
       const retryAfterHeader = response.headers.get('retry-after');
+      const { retryAfterMs: retryAfterBody, esCuotaDiariaOMensual } =
+        parseGeminiRetryInfo(bodyText);
       const retryAfterMs = retryAfterHeader
-        ? parseRetryAfterMs(retryAfterHeader)
-        : null;
+        ? parseRetryAfterHeader(retryAfterHeader)
+        : retryAfterBody;
       throw new GeminiHttpError(
-        `Gemini respondió ${response.status}: ${await response.text()}`,
+        `Gemini respondió ${response.status}: ${bodyText}`,
         response.status,
         retryAfterMs,
+        esCuotaDiariaOMensual,
       );
     }
 

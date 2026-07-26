@@ -55,7 +55,12 @@ export interface AlertaInventario {
   itemInventarioId: string | null;
   tipo: TipoAlerta;
   mensaje: string;
+  /** Auto-chequeo del operario que dictó (no es el gate de auditoría). */
   resuelto: boolean;
+  /** Gate real: solo true cuando un AUDITOR/ADMIN la revisó por separado. */
+  revisadoPorAuditor: boolean;
+  revisadoPor: string | null;
+  revisadoEn: string | null;
   createdAt: string;
 }
 

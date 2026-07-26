@@ -20,6 +20,7 @@ import { AnomaliaModal } from "@/components/anomalia-modal";
 import { AccionesCierre } from "@/components/acciones-cierre";
 import { ColaOfflineIndicator } from "@/components/cola-offline-indicator";
 import { AuditoriaCiegaCard } from "@/components/auditoria-ciega-card";
+import { AlertasRevisionAuditor } from "@/components/alertas-revision-auditor";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ClientProviders } from "@/components/client-providers";
@@ -50,7 +51,12 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
     for (const id of anomaliaColaIds) {
       const item = inventario.items.find((i) => i.id === id);
       if (!item || !item.esAnomalia) continue;
-      const alertas = inventario.alertas.filter((a) => a.itemInventarioId === id);
+      // Solo alertas que el operario TODAVÍA no confirmó — una vez confirmadas
+      // (resuelto: true) quedan pendientes de revisión por un auditor, pero
+      // ya no deben reabrir este modal de auto-chequeo (ver AlertasRevisionAuditor).
+      const alertas = inventario.alertas.filter(
+        (a) => a.itemInventarioId === id && !a.resuelto,
+      );
       if (alertas.length > 0) return { item, alertas };
     }
     return null;
@@ -346,6 +352,14 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
               </div>
             )}
           </section>
+
+          {usuario?.rol !== "OPERARIO" && (
+            <AlertasRevisionAuditor
+              inventarioId={inventario.id}
+              alertas={inventario.alertas}
+              onRevisada={() => void cargar()}
+            />
+          )}
 
           <AccionesCierre inventario={inventario} onEstadoActualizado={handleEstadoActualizado} />
         </div>

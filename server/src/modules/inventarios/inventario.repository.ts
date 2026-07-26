@@ -13,7 +13,13 @@ import {
 const INVENTARIO_DETALLE_INCLUDE = {
   almacen: true,
   items: { include: { articulo: true }, orderBy: { updatedAt: 'desc' } },
-  alertas: { where: { resuelto: false }, orderBy: { createdAt: 'desc' } },
+  // "Activa" = todavía le falta al menos uno de los dos pasos: que el
+  // OPERARIO la confirme (resuelto) y que un AUDITOR/ADMIN la revise
+  // (revisadoPorAuditor) — ver el comentario en el modelo AlertaInventario.
+  alertas: {
+    where: { OR: [{ resuelto: false }, { revisadoPorAuditor: false }] },
+    orderBy: { createdAt: 'desc' },
+  },
   // Si ESTE inventario es la auditoría ciega de otro (solo id/dueño, no conteos).
   auditaA: {
     select: {
@@ -252,7 +258,10 @@ export class InventarioRepository {
 
   contarAlertasActivas(inventarioId: string): Promise<number> {
     return this.prisma.alertaInventario.count({
-      where: { inventarioId, resuelto: false },
+      where: {
+        inventarioId,
+        OR: [{ resuelto: false }, { revisadoPorAuditor: false }],
+      },
     });
   }
 
@@ -260,6 +269,17 @@ export class InventarioRepository {
     return this.prisma.alertaInventario.update({
       where: { id },
       data: { resuelto: true },
+    });
+  }
+
+  revisarAlerta(id: string, auditorId: string): Promise<AlertaInventario> {
+    return this.prisma.alertaInventario.update({
+      where: { id },
+      data: {
+        revisadoPorAuditor: true,
+        revisadoPor: auditorId,
+        revisadoEn: new Date(),
+      },
     });
   }
 

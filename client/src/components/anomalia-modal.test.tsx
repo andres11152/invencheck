@@ -45,6 +45,9 @@ function alerta(overrides: Partial<AlertaInventario> = {}): AlertaInventario {
     tipo: TipoAlerta.ANOMALIA_CANTIDAD,
     mensaje: "Conteo se desvía 900% del histórico",
     resuelto: false,
+    revisadoPorAuditor: false,
+    revisadoPor: null,
+    revisadoEn: null,
     createdAt: new Date().toISOString(),
     ...overrides,
   };
