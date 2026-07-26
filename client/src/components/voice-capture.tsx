@@ -22,7 +22,7 @@ export function VoiceCapture({
   onEscanearSku: (sku: string, cantidad: number) => void;
   procesando: boolean;
   autoFocusTexto?: boolean;
-  fuenteIA?: "GEMINI" | "REGLAS_LOCALES" | "ESCANER_SKU" | null;
+  fuenteIA?: "GEMINI" | "REGLAS_LOCALES" | "ESCANER_SKU" | "SELECCION_MANUAL" | null;
 }) {
   const { isSupported, estado, transcript, interim, start, stop, reset } =
     useSpeechRecognition("es-CO");
@@ -104,6 +104,12 @@ export function VoiceCapture({
             <div className="flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1 text-xs font-semibold text-primary backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-300">
               <span className="h-2 w-2 rounded-full bg-primary" />
               Match por SKU exacto
+            </div>
+          )}
+          {fuenteIA === "SELECCION_MANUAL" && (
+            <div className="flex items-center gap-1.5 rounded-full border border-secondary/40 bg-secondary/10 px-3.5 py-1 text-xs font-semibold text-secondary backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-300">
+              <span className="h-2 w-2 rounded-full bg-secondary" />
+              Elegido manualmente
             </div>
           )}
           {fuenteIA === null && (

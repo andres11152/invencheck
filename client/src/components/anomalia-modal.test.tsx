@@ -92,30 +92,40 @@ describe("AnomaliaModal", () => {
     expect(navigator.vibrate).toHaveBeenCalledWith(200);
   });
 
-  it("muestra el promedio histórico cuando el artículo lo tiene", () => {
+  // Regresión de un bug de precisión real: el modal mostraba una línea fija
+  // "Promedio habitual: X" usando SIEMPRE `articulo.stockHistoricoAvg` (el
+  // promedio GLOBAL del catálogo, mezclando las 48 bodegas) — sin importar
+  // si la alerta de abajo en realidad se calculó contra el histórico de
+  // ESA bodega específica (un número distinto). El operario podía ver dos
+  // cifras diferentes en el mismo modal sin ninguna aclaración de cuál era
+  // cuál. Ahora el único número mostrado es el del mensaje de la alerta,
+  // que ya trae su fuente identificada.
+  it("no duplica un promedio genérico del catálogo — solo muestra el mensaje de la alerta, ya con su fuente identificada", () => {
     render(
       <AnomaliaModal
-        entrada={entrada({ item: item({ articulo: articulo({ stockHistoricoAvg: 10 }) }) })}
+        entrada={entrada({
+          item: item({ articulo: articulo({ stockHistoricoAvg: 999999 }) }),
+          alertas: [
+            alerta({
+              mensaje:
+                'Conteo de 20 KILOGRAMO se desvía -84% del histórico de esta bodega (126.99) para "PAPA CRIOLLA".',
+            }),
+          ],
+        })}
         total={1}
         onConfirmar={vi.fn()}
         onRedictar={vi.fn()}
       />,
     );
 
-    expect(screen.getByText(/Promedio habitual/)).toBeInTheDocument();
-  });
-
-  it("sin promedio histórico muestra el mensaje de 'sin promedio registrado'", () => {
-    render(
-      <AnomaliaModal
-        entrada={entrada({ item: item({ articulo: articulo({ stockHistoricoAvg: null }) }) })}
-        total={1}
-        onConfirmar={vi.fn()}
-        onRedictar={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText(/no tiene promedio histórico registrado/)).toBeInTheDocument();
+    // El número real usado para evaluar la anomalía (126.99, de ESTA
+    // bodega) sí debe verse — con su fuente aclarada en el propio texto.
+    expect(screen.getByText(/histórico de esta bodega \(126.99\)/)).toBeInTheDocument();
+    // El promedio GLOBAL del catálogo (999999, un valor totalmente distinto
+    // y potencialmente engañoso si no coincide con el usado) NO debe
+    // aparecer sin más como si fuera "el" promedio habitual.
+    expect(screen.queryByText(/999999/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Promedio habitual/)).not.toBeInTheDocument();
   });
 
   it('llama a onRedictar al hacer clic en "Re-dictar / Corregir"', async () => {

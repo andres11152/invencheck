@@ -131,11 +131,19 @@ export interface ItemNoMatcheado {
   cantidadDictada: number;
   unidadDictada: UnidadMedida;
   motivo: string;
+  /**
+   * Candidatos concretos cuando el motivo es ambigüedad real. Cuando un
+   * candidato es prefijo exacto de otro ("PAPA CRIOLLA" / "PAPA CRIOLLA
+   * PRECOCIDA"), no hay ninguna frase que se pueda decir por voz para
+   * elegir el corto sin reproducir la misma ambigüedad — de ahí que el
+   * cliente deba ofrecer elegir directamente en pantalla.
+   */
+  candidatos?: Array<{ id: string; nombre: string }>;
 }
 
 export interface ProcesarTomaPorVozResult {
   inventario: InventarioDetalle;
-  fuenteIA: "GEMINI" | "REGLAS_LOCALES" | "ESCANER_SKU";
+  fuenteIA: "GEMINI" | "REGLAS_LOCALES" | "ESCANER_SKU" | "SELECCION_MANUAL";
   itemsMatcheados: ItemProcesadoResumen[];
   itemsNoMatcheados: ItemNoMatcheado[];
 }

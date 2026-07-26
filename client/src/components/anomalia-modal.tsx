@@ -76,11 +76,22 @@ export function AnomaliaModal({
                 ¿Confirmas {formatCantidad(entrada.item.conteoFisico, entrada.item.unidadUsada)} de{" "}
                 {entrada.item.articulo.nombre}?
               </DialogTitle>
+              {/*
+                Antes acá se mostraba "Promedio habitual: X" usando siempre
+                `articulo.stockHistoricoAvg` (el promedio GLOBAL del
+                catálogo, mezclando las 48 bodegas) — sin importar si la
+                alerta de abajo se calculó en realidad contra el histórico
+                de ESTA bodega específica (`promedioHistoricoBodega`, un
+                número distinto). Podían mostrarse dos cifras diferentes en
+                el mismo modal sin ninguna aclaración de cuál era cuál. El
+                mensaje de cada alerta (abajo) ya trae el número correcto
+                con su fuente identificada ("del histórico de esta bodega"
+                vs. "del histórico general del catálogo") — no hace falta
+                duplicarlo acá con menos precisión.
+              */}
               <DialogDescription>
-                {entrada.item.articulo.stockHistoricoAvg !== null
-                  ? `Promedio habitual: ${formatCantidad(entrada.item.articulo.stockHistoricoAvg, entrada.item.articulo.unidadEstd)}`
-                  : "Este artículo no tiene promedio histórico registrado."}
-                {total > 1 ? ` · Quedan ${total} anomalía(s) por revisar` : ""}
+                Revisa el detalle antes de confirmar.
+                {total > 1 ? ` Quedan ${total} anomalía(s) por revisar.` : ""}
               </DialogDescription>
             </DialogHeader>
 

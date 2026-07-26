@@ -4,7 +4,8 @@ import { UnidadMedida } from '../../generated/prisma/client';
 import { DictadoVozItem, parseVoiceItemsLocally } from './voice-parser.util';
 import type { EnvironmentVariables } from '../../config/env.validation';
 
-export type FuenteDictado = 'GEMINI' | 'REGLAS_LOCALES' | 'ESCANER_SKU';
+export type FuenteDictado =
+  'GEMINI' | 'REGLAS_LOCALES' | 'ESCANER_SKU' | 'SELECCION_MANUAL';
 
 export interface ProcesarDictadoVozResult {
   items: DictadoVozItem[];

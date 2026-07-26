@@ -3,6 +3,7 @@ import { InventarioService } from './inventario.service';
 import { CrearInventarioDto } from './dto/crear-inventario.dto';
 import { ProcesarVozDto } from './dto/procesar-voz.dto';
 import { ProcesarSkuDto } from './dto/procesar-sku.dto';
+import { ProcesarArticuloDto } from './dto/procesar-articulo.dto';
 import { CambiarEstadoDto } from './dto/cambiar-estado.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -43,6 +44,20 @@ export class InventarioController {
     return this.inventarioService.procesarConteoPorSku(
       id,
       dto.sku,
+      dto.cantidad,
+      dto.unidadDictada ?? UnidadMedida.UNIDAD,
+    );
+  }
+
+  // Selección manual directa entre los `candidatos` de una ambigüedad de
+  // voz — ver el comentario en InventarioService.procesarConteoPorArticulo
+  // sobre por qué re-dictar no alcanza cuando un candidato es prefijo
+  // exacto de otro ("PAPA CRIOLLA" / "PAPA CRIOLLA PRECOCIDA").
+  @Post(':id/procesar-articulo')
+  procesarArticulo(@Param('id') id: string, @Body() dto: ProcesarArticuloDto) {
+    return this.inventarioService.procesarConteoPorArticulo(
+      id,
+      dto.articuloId,
       dto.cantidad,
       dto.unidadDictada ?? UnidadMedida.UNIDAD,
     );

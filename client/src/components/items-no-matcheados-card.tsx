@@ -1,4 +1,5 @@
-import { HelpCircle, Mic, X } from "lucide-react";
+import { useState } from "react";
+import { HelpCircle, Loader2, Mic, X } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -19,16 +20,36 @@ export interface NoMatcheadoPendiente extends ItemNoMatcheado {
  * mirando la pantalla mientras dicta — el caso de uso típico de esta app —
  * así que ahora queda visible en una tarjeta persistente, igual que las
  * anomalías, hasta que el operario la reintente o la descarte a mano.
+ *
+ * Cuando hay `candidatos` (ambigüedad real, no "sin coincidencia"), se
+ * ofrece elegir directamente en pantalla en vez de solo re-dictar: cuando
+ * un candidato es prefijo exacto de otro ("PAPA CRIOLLA" / "PAPA CRIOLLA
+ * PRECOCIDA"), no existe ninguna frase que se pueda decir por voz para
+ * elegir el corto sin reproducir la MISMA ambigüedad — re-dictar en ese
+ * caso entra en loop infinito (bug real reportado y confirmado).
  */
 export function ItemsNoMatcheadosCard({
   items,
   onReintentar,
   onDescartar,
+  onElegirCandidato,
 }: {
   items: NoMatcheadoPendiente[];
   onReintentar: (id: string) => void;
   onDescartar: (id: string) => void;
+  onElegirCandidato: (item: NoMatcheadoPendiente, articuloId: string) => Promise<void>;
 }) {
+  const [eligiendo, setEligiendo] = useState<string | null>(null);
+
+  async function elegir(item: NoMatcheadoPendiente, articuloId: string) {
+    setEligiendo(articuloId);
+    try {
+      await onElegirCandidato(item, articuloId);
+    } finally {
+      setEligiendo(null);
+    }
+  }
+
   if (items.length === 0) return null;
 
   return (
@@ -49,7 +70,7 @@ export function ItemsNoMatcheadosCard({
             key={item.id}
             className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-warning/30 bg-background/60 p-2.5"
           >
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">
                 &ldquo;{item.articuloBusqueda}&rdquo;
                 <span className="ml-1.5 font-normal text-muted-foreground">
@@ -57,6 +78,25 @@ export function ItemsNoMatcheadosCard({
                 </span>
               </p>
               <p className="mt-0.5 text-xs text-warning">{item.motivo}</p>
+
+              {item.candidatos && item.candidatos.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {item.candidatos.map((candidato) => (
+                    <Button
+                      key={candidato.id}
+                      size="sm"
+                      variant="secondary"
+                      disabled={eligiendo !== null}
+                      onClick={() => void elegir(item, candidato.id)}
+                    >
+                      {eligiendo === candidato.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      Es &ldquo;{candidato.nombre}&rdquo;
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex shrink-0 gap-1.5">
               <Button size="sm" variant="outline" onClick={() => onReintentar(item.id)}>

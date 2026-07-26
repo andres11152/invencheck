@@ -133,6 +133,18 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  // Selección manual directa de un candidato ambiguo (por id) — rompe el
+  // loop de re-dictar cuando un candidato es prefijo exacto de otro y por
+  // voz es imposible distinguirlo del dictado ambiguo original.
+  procesarArticulo: (
+    id: string,
+    data: { articuloId: string; cantidad: number; unidadDictada?: UnidadMedida },
+  ) =>
+    request<ProcesarTomaPorVozResult>(`/inventarios/${id}/procesar-articulo`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   cambiarEstado: (id: string, estado: EstadoInventario) =>
     request<Inventario>(`/inventarios/${id}/estado`, {
       method: "PATCH",

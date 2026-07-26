@@ -40,7 +40,7 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
   const [procesandoVoz, setProcesandoVoz] = useState(false);
   const [voiceResetKey, setVoiceResetKey] = useState(0);
   const [ultimaFuenteIA, setUltimaFuenteIA] = useState<
-    "GEMINI" | "REGLAS_LOCALES" | "ESCANER_SKU" | null
+    "GEMINI" | "REGLAS_LOCALES" | "ESCANER_SKU" | "SELECCION_MANUAL" | null
   >(null);
 
   // Cola de ids de ItemInventario con anomalía pendiente de revisar (por
@@ -60,7 +60,12 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
     if (!inventario) return null;
     for (const id of anomaliaColaIds) {
       const item = inventario.items.find((i) => i.id === id);
-      if (!item || !item.esAnomalia) continue;
+      // No se filtra por `item.esAnomalia`: ese campo refleja solo la
+      // ÚLTIMA evaluación, y puede quedar en `false` mientras una alerta
+      // vieja (de cuando sí aplicaba) sigue activa por algún motivo — lo
+      // que de verdad importa para decidir si hay algo que mostrar es si
+      // quedan alertas sin confirmar, no ese booleano por separado.
+      if (!item) continue;
       // Solo alertas que el operario TODAVÍA no confirmó — una vez confirmadas
       // (resuelto: true) quedan pendientes de revisión por un auditor, pero
       // ya no deben reabrir este modal de auto-chequeo (ver AlertasRevisionAuditor).
@@ -92,10 +97,15 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
     void cargar();
   }, [cargar]);
 
-  // Contar anomalías activas totales para indicadores
+  // Cuenta ítems con alguna alerta activa sin confirmar (no `item.esAnomalia`
+  // — ver el comentario en `anomaliaModalEntrada` sobre por qué ese campo
+  // puede quedar desalineado de las alertas reales).
   const anomaliasTotalesCount = useMemo(() => {
     if (!inventario) return 0;
-    return inventario.items.filter((item) => item.esAnomalia).length;
+    const itemIdsConAlerta = new Set(
+      inventario.alertas.filter((a) => !a.resuelto).map((a) => a.itemInventarioId),
+    );
+    return inventario.items.filter((item) => itemIdsConAlerta.has(item.id)).length;
   }, [inventario]);
 
   function aplicarResultado(resultado: ProcesarTomaPorVozResult, origenOffline: boolean) {
@@ -210,6 +220,27 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
       }
     } finally {
       setProcesandoVoz(false);
+    }
+  }
+
+  // Selección manual directa de un candidato ambiguo — rompe el loop de
+  // re-dictar cuando un candidato es prefijo exacto de otro ("PAPA CRIOLLA"
+  // / "PAPA CRIOLLA PRECOCIDA"): no hay ninguna frase que se pueda decir
+  // por voz para elegir el corto sin reproducir la MISMA ambigüedad.
+  async function handleElegirCandidato(
+    item: NoMatcheadoPendiente,
+    articuloId: string,
+  ) {
+    try {
+      const resultado = await api.procesarArticulo(inventarioId, {
+        articuloId,
+        cantidad: item.cantidadDictada,
+        unidadDictada: item.unidadDictada,
+      });
+      aplicarResultado(resultado, false);
+      setNoMatcheadosCola((prev) => prev.filter((i) => i.id !== item.id));
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "No se pudo registrar el artículo elegido");
     }
   }
 
@@ -348,6 +379,7 @@ function InventarioPageContent({ params }: { params: { id: string } }) {
             items={noMatcheadosCola}
             onReintentar={handleReintentarNoMatcheado}
             onDescartar={handleDescartarNoMatcheado}
+            onElegirCandidato={handleElegirCandidato}
           />
         </div>
 

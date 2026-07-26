@@ -20,13 +20,22 @@ export function ItemInventarioCard({
   const merma = calcularMerma(item.conteoFisico, item.teorico);
   const mermaTono =
     merma === 0 ? "text-muted-foreground" : merma < 0 ? "text-destructive" : "text-success";
+  // El click para abrir el modal se habilita por lo mismo que ya hace
+  // visible el badge de abajo (`alertas.length > 0`), no por
+  // `item.esAnomalia` — son dos campos que en teoría deberían ir siempre
+  // sincronizados, pero un bug real mostró que pueden desalinearse (una
+  // alerta vieja seguía activa después de que `esAnomalia` ya se había
+  // corregido a `false` en una re-evaluación posterior). Si el badge se
+  // ve, el click tiene que funcionar — sin depender de que otro campo
+  // aparte esté de acuerdo.
+  const tieneAlertasActivas = alertas.length > 0;
 
   return (
     <Card
-      onClick={item.esAnomalia ? onRevisarAnomalia : undefined}
+      onClick={tieneAlertasActivas ? onRevisarAnomalia : undefined}
       className={cn(
         "p-4 transition-all duration-200",
-        item.esAnomalia &&
+        tieneAlertasActivas &&
           "cursor-pointer border-destructive/50 bg-destructive/[0.06] hover:-translate-y-0.5 hover:bg-destructive/[0.12] hover:shadow-lg active:translate-y-0",
       )}
     >
@@ -62,11 +71,19 @@ export function ItemInventarioCard({
               <p className="font-semibold">{formatCantidad(item.conteoFisico, item.unidadUsada)}</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Teórico ERP</p>
+              {/* "Teórico" se siembra de `articulo.stockHistoricoAvg` (promedio
+               * histórico de conteos pasados) — no hay integración viva con
+               * un saldo de ERP en este sistema. Llamarlo "Teórico ERP"
+               * insinuaba una precisión/autoridad que el dato no tiene (mismo
+               * problema que ya se corrigió en el modal de anomalía). */}
+              <p className="text-xs text-muted-foreground">Prom. Histórico</p>
               <p className="font-semibold">{formatCantidad(item.teorico, item.unidadUsada)}</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Merma / Dif.</p>
+              {/* "Merma" es un término contable específico (pérdida real
+               * frente a un saldo auditado) — acá es solo la diferencia
+               * contra un promedio histórico, no una merma confirmada. */}
+              <p className="text-xs text-muted-foreground">Diferencia</p>
               <p className={cn("font-semibold", mermaTono)}>
                 {merma > 0 ? "+" : ""}
                 {formatNumero(merma)}

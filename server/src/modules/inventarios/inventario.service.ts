@@ -45,6 +45,17 @@ export interface ItemNoMatcheado {
   cantidadDictada: number;
   unidadDictada: UnidadMedida;
   motivo: string;
+  /**
+   * Candidatos concretos cuando el motivo es ambigüedad real (no "sin
+   * coincidencia"). Cuando uno de los candidatos es prefijo exacto de otro
+   * ("PAPA CRIOLLA" / "PAPA CRIOLLA PRECOCIDA"), decirle al operario qué
+   * palabra agregar no alcanza: repetir la frase corta reproduce la MISMA
+   * ambigüedad indefinidamente, no hay forma de "decir por voz" el
+   * candidato corto sin que suene igual al dictado original. El cliente usa
+   * esta lista para dejar elegir directamente en pantalla, sin pasar por
+   * matching difuso de nuevo.
+   */
+  candidatos?: Array<{ id: string; nombre: string }>;
 }
 
 export interface ProcesarTomaPorVozResult {
@@ -315,6 +326,10 @@ export class InventarioService {
           cantidadDictada: item.cantidad,
           unidadDictada: item.unidadDictada,
           motivo: this.describirMotivoNoMatch(match),
+          candidatos: match.candidatosAmbiguos?.map((a) => ({
+            id: a.id,
+            nombre: a.nombre,
+          })),
         });
         continue;
       }
@@ -389,6 +404,42 @@ export class InventarioService {
       fuenteIA: 'ESCANER_SKU',
       itemsMatcheados,
       itemsNoMatcheados,
+    };
+  }
+
+  /**
+   * Entrada alterna cuando el operario elige directamente en pantalla entre
+   * los `candidatos` de una ambigüedad de voz (ver `ItemNoMatcheado`), en
+   * vez de re-dictar. Necesaria porque cuando un candidato es prefijo
+   * exacto de otro ("PAPA CRIOLLA" / "PAPA CRIOLLA PRECOCIDA"), no existe
+   * ninguna frase que se pueda decir por voz para seleccionar el corto sin
+   * volver a producir la MISMA ambigüedad — re-dictar en ese caso entra en
+   * loop indefinido. Va directo por `articuloId`, sin matching difuso.
+   */
+  async procesarConteoPorArticulo(
+    inventarioId: string,
+    articuloId: string,
+    cantidad: number,
+    unidadDictada: UnidadMedida,
+  ): Promise<ProcesarTomaPorVozResult> {
+    const inventario = await this.validarInventarioEditable(inventarioId);
+    const articulo = await this.articuloService.findById(articuloId);
+
+    const itemMatcheado = await this.procesarLineaArticulo({
+      inventarioId,
+      almacenId: inventario.almacenId,
+      articulo,
+      articuloBusqueda: articulo.nombre,
+      cantidadDictada: cantidad,
+      unidadDictada,
+      scoreMatch: 1, // selección manual explícita, no difusa
+    });
+
+    return {
+      inventario: await this.findDetalle(inventarioId),
+      fuenteIA: 'SELECCION_MANUAL',
+      itemsMatcheados: [itemMatcheado],
+      itemsNoMatcheados: [],
     };
   }
 
@@ -503,6 +554,7 @@ export class InventarioService {
           teoricoInicial: articulo.stockHistoricoAvg ?? 0,
           cantidadDictada,
           unidadDictada,
+          unidadEstd: articulo.unidadEstd,
         });
       await this.inventarioRepository.crearAlertas([
         {
@@ -575,6 +627,16 @@ export class InventarioService {
         })),
       );
     }
+
+    // Cualquier alerta activa de un tipo que esta evaluación NO reprodujo
+    // (ej. ANOMALIA_CANTIDAD de cuando el conteo acumulado era otro, o
+    // UNIDAD_AMBIGUA — este branch solo se alcanza cuando la unidad SÍ
+    // pudo convertirse) ya no refleja el estado actual del ítem — ver el
+    // comentario en InventarioRepository.resolverAlertasSuperadas.
+    await this.inventarioRepository.resolverAlertasSuperadas(
+      itemInventario.id,
+      evaluacion.alertas.map((alerta) => alerta.tipo),
+    );
 
     return {
       articuloBusqueda: params.articuloBusqueda,

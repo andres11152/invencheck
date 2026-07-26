@@ -21,7 +21,11 @@ const ESTADO_LABEL: Record<EstadoInventario, string> = {
 };
 
 export function InventarioHeader({ inventario }: { inventario: InventarioDetalle }) {
-  const totalAnomalias = inventario.items.filter((i) => i.esAnomalia).length;
+  // Ítems con al menos una alerta activa — no `item.esAnomalia`, que puede
+  // quedar en `false` mientras una alerta vieja sigue activa (ver el
+  // comentario en item-inventario-card.tsx).
+  const itemIdsConAlerta = new Set(inventario.alertas.map((a) => a.itemInventarioId));
+  const totalAnomalias = inventario.items.filter((i) => itemIdsConAlerta.has(i.id)).length;
 
   return (
     <header className="space-y-3">

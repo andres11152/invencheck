@@ -107,31 +107,45 @@ export function AccionesCierre({
             Solo un auditor o administrador puede consolidar y enviar este inventario al ERP.
           </p>
         )}
+        {/* La acción de cierre (irreversible-ish: mueve el estado del
+         * inventario) va en su propia fila, a todo el ancho — separada de
+         * las utilidades de exportar/imprimir para que no compita
+         * visualmente con ellas en la misma grilla. */}
+        {!enviadoAERP && puedeCerrar && (
+          <Button
+            variant={inventario.estado === EstadoInventario.CONCILIADO ? "outline" : "success"}
+            size="lg"
+            disabled={consolidando || yaConciliado || inventario.items.length === 0 || alertasActivas > 0}
+            onClick={consolidar}
+            className="w-full"
+          >
+            {consolidando ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            {yaConciliado ? "Consolidado" : "Consolidar y Finalizar"}
+          </Button>
+        )}
+        {inventario.estado === EstadoInventario.CONCILIADO && puedeCerrar && (
+          <Button variant="default" size="lg" disabled={enviando} onClick={enviarAERP} className="w-full">
+            {enviando ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            Enviar a ERP
+          </Button>
+        )}
+
+        {puedeCerrar && !yaConciliado && (
+          <div className="h-px bg-border/70" />
+        )}
+
+        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+          Exportar
+        </p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {!enviadoAERP && puedeCerrar && (
-            <Button
-              variant={inventario.estado === EstadoInventario.CONCILIADO ? "outline" : "success"}
-              disabled={consolidando || yaConciliado || inventario.items.length === 0 || alertasActivas > 0}
-              onClick={consolidar}
-            >
-              {consolidando ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="h-4 w-4" />
-              )}
-              {yaConciliado ? "Consolidado" : "Consolidar y Finalizar"}
-            </Button>
-          )}
-          {inventario.estado === EstadoInventario.CONCILIADO && puedeCerrar && (
-            <Button variant="default" disabled={enviando} onClick={enviarAERP}>
-              {enviando ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <CheckCircle2 className="h-4 w-4" />
-              )}
-              Enviar a ERP
-            </Button>
-          )}
           <Button
             variant="outline"
             disabled={inventario.items.length === 0}
