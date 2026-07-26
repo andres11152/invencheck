@@ -71,6 +71,15 @@ export function BarcodeScannerModal({
     };
   }, [abierto]);
 
+  // Conecta el stream ya obtenido al <video> una vez que React lo monta
+  // (recién existe en el DOM cuando camaraActiva pasa a true, un render
+  // después de que iniciarCamara obtuvo el stream).
+  useEffect(() => {
+    if (camaraActiva && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+  }, [camaraActiva]);
+
   // Bucle de decodificación: mientras la cámara esté activa y no se haya
   // detectado nada todavía, intenta leer un código por frame. Se detiene
   // apenas encuentra uno — el operario confirma cantidad y registra, no se
@@ -112,9 +121,11 @@ export function BarcodeScannerModal({
           video: { facingMode: "environment" },
         });
         streamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
+        // El <video> solo se monta cuando camaraActiva es true (ver el
+        // render de abajo) — en este punto videoRef.current todavía es
+        // null, así que asignar el stream acá no hace nada. Se asigna en
+        // el useEffect de abajo, que corre DESPUÉS de que React monte el
+        // <video> tras este setCamaraActiva(true).
         setCamaraActiva(true);
       }
     } catch {
