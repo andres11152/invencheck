@@ -1,6 +1,9 @@
 import { ArticuloRepository } from './articulo.repository';
-import type { PrismaService } from '../../prisma/prisma.service';
+import { ContextoOrganizacionService } from '../../prisma/contexto-organizacion.service';
+import type { PrismaConAlcance } from '../../prisma/prisma.module';
 import { UnidadMedida, type Articulo } from '../../generated/prisma/client';
+
+const ORGANIZACION_ID = 'org-test-1';
 
 function buildRow(i: number) {
   return {
@@ -22,6 +25,8 @@ function buildRow(i: number) {
  * partió en lotes de 100 con su propia transacción corta cada uno.
  */
 describe('ArticuloRepository.upsertMany — procesamiento por lotes', () => {
+  const contexto = new ContextoOrganizacionService();
+
   function buildRepository(existentes: Articulo[] = []) {
     const transactionCalls: unknown[][] = [];
     const prisma = {
@@ -34,16 +39,21 @@ describe('ArticuloRepository.upsertMany — procesamiento por lotes', () => {
         transactionCalls.push(ops);
         return Promise.resolve(ops);
       }),
-    } as unknown as PrismaService;
+    } as unknown as PrismaConAlcance;
 
-    return { repository: new ArticuloRepository(prisma), transactionCalls };
+    return {
+      repository: new ArticuloRepository(prisma, contexto),
+      transactionCalls,
+    };
   }
 
   it('con menos de 100 filas hace una sola transacción', async () => {
     const { repository, transactionCalls } = buildRepository();
     const rows = Array.from({ length: 30 }, (_, i) => buildRow(i));
 
-    await repository.upsertMany(rows);
+    await contexto.ejecutarConOrganizacion(ORGANIZACION_ID, () =>
+      repository.upsertMany(rows),
+    );
 
     expect(transactionCalls).toHaveLength(1);
     expect(transactionCalls[0]).toHaveLength(30);
@@ -53,7 +63,9 @@ describe('ArticuloRepository.upsertMany — procesamiento por lotes', () => {
     const { repository, transactionCalls } = buildRepository();
     const rows = Array.from({ length: 250 }, (_, i) => buildRow(i));
 
-    const count = await repository.upsertMany(rows);
+    const count = await contexto.ejecutarConOrganizacion(ORGANIZACION_ID, () =>
+      repository.upsertMany(rows),
+    );
 
     expect(count).toBe(250);
     expect(transactionCalls).toHaveLength(3);
@@ -74,13 +86,15 @@ describe('ArticuloRepository.upsertMany — procesamiento por lotes', () => {
         update: jest.fn(),
       },
       $transaction: transactionMock,
-    } as unknown as PrismaService;
-    const repository = new ArticuloRepository(prisma);
+    } as unknown as PrismaConAlcance;
+    const repository = new ArticuloRepository(prisma, contexto);
     const rows = Array.from({ length: 150 }, (_, i) => buildRow(i));
 
-    await expect(repository.upsertMany(rows)).rejects.toThrow(
-      'timeout simulado en el lote 2',
-    );
+    await expect(
+      contexto.ejecutarConOrganizacion(ORGANIZACION_ID, () =>
+        repository.upsertMany(rows),
+      ),
+    ).rejects.toThrow('timeout simulado en el lote 2');
     expect(transactionMock).toHaveBeenCalledTimes(2);
   });
 });

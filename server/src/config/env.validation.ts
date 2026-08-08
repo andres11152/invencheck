@@ -25,9 +25,23 @@ import {
  * recordar mantener 3 validaciones distintas en sync.
  */
 export class EnvironmentVariables {
+  /**
+   * Conexión del PROCESO de la app: rol `invencheck_app`, sin privilegios,
+   * alcanzado por las policies de RLS. `PrismaService` se niega a arrancar
+   * si apunta a un rol superusuario o con BYPASSRLS.
+   */
   @IsString()
   @IsNotEmpty()
   DATABASE_URL!: string;
+
+  /**
+   * Conexión de la CLI de Prisma (migrate/seed/studio): rol dueño de las
+   * tablas. Opcional acá porque el proceso de la app nunca la usa — solo la
+   * lee `prisma.config.ts`, fuera de este runtime.
+   */
+  @IsOptional()
+  @IsString()
+  DATABASE_URL_MIGRATIONS?: string;
 
   @IsString()
   @IsNotEmpty()

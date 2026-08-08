@@ -97,6 +97,23 @@ npm run audit:voice-matching
 
 La primera corrida (938 artículos) encontró 78 (8.3%) que resolvían en silencio a OTRO artículo del catálogo con score alto — sin ninguna señal de que fuera incorrecto. Se corrigió con 3 cambios (detección de ambigüedad top-1/top-2 en `ArticuloService`, `normalizeSpokenText` ya no descarta números que identifican al producto, `buildAliases` prioriza el calificador final). Última corrida tras el fix: **0/938 matches incorrectos silenciosos**, 175/938 (18.7%) ahora caen en `itemsNoMatcheados` pidiendo precisión al operario en vez de auto-confirmar — trade-off elegido con los datos de la propia auditoría (`AMBIGUEDAD_GAP = 0.3` en `articulo.service.ts`, con el razonamiento completo en el comentario de esa constante). Detalle completo: limitación #6 (ya resuelta) en el README raíz.
 
+### Auditoría automatizada "cero errores" contra el catálogo real completo
+
+```bash
+npm run prisma:import-excel     # si el catálogo real todavía no está cargado
+npm run test:catalogo-real
+```
+
+A diferencia del script de arriba (que genera un reporte JSON para revisar a mano), `test/catalogo-real.catalogo-spec.ts` es una suite de Jest real (9 tests, `expect()` con falla dura) que corre contra **cada uno** de los artículos del catálogo real importado — pensado como "qué notaría el cliente si algo estuviera mal", no solo matching:
+
+1. El catálogo real está importado (umbral mínimo 900 artículos — si falla, correr `prisma:import-excel` primero).
+2. Cada artículo: dictar su propio nombre/alias nunca matchea en silencio contra OTRO artículo (mismo chequeo que el script de arriba, pero como assertion, no como reporte).
+3. Cuando se detecta ambigüedad, los candidatos son artículos reales y distintos entre sí (no duplicados, no inventados).
+4. **Cada artículo, dictado en cualquiera de las 8 unidades del sistema**: nunca convierte a ciegas entre unidades incompatibles — el ejemplo textual del brief ("cinco kilos" nunca se confunde con "cinco gramos"), verificado contra los ~936 productos reales, no un puñado de casos sueltos. Usa una tabla de factores de conversión escrita a mano, independiente de `factorConversion` — si derivara el valor "esperado" llamando a la misma función bajo prueba, un bug en la propia tabla de conversión pasaría inadvertido (confirmado: se rompió el factor gramo→kilogramo a propósito con la primera versión del test, que sí reusaba `factorConversion`, y siguió en verde; con la tabla independiente, falla y lista cada producto afectado).
+5. Chequeos de calidad de datos: sin nombres vacíos, sin SKU duplicados, sin nombres duplicados, sin promedio histórico negativo, unidad estándar siempre válida.
+
+Corre en su propio config de Jest (`test/jest-catalogo.json`, con su propio `setupFiles` que carga `.env` — la base de dev con el catálogo real — en vez de `.env.test`), **no** como parte de `test`/`test:e2e`: mismo motivo que el script de arriba, el catálogo real no existe en CI. Es de solo lectura — nunca crea inventarios ni escribe en `items_inventario`/`alertas_inventario`, para no ensuciar la base de datos de desarrollo con datos de prueba.
+
 ## Arquitectura
 
 Cada módulo en `src/modules/` (`almacenes`, `articulos`, `ai-engine`, `inventarios`, `reportes`, `integration`, `auth`, `health`) sigue **Controller → Service → Repository**. Los repositorios devuelven tipos derivados de Prisma vía `satisfies Prisma.XInclude` + `Prisma.XGetPayload<{...}>`, nunca interfaces declaradas a mano.

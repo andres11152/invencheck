@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
 /*
- * COLSUBSIDIO DESIGN SYSTEM — TAILWIND CONFIG
+ * INVENCHECK DESIGN SYSTEM — TAILWIND CONFIG
  *
  * CONVENCIÓN:
  *   - Todos los colores referencian CSS custom properties (hsl(var(--xxx)))
@@ -38,13 +38,13 @@ const config: Config = {
           foreground: "hsl(var(--popover-foreground))",
         },
 
-        /* Primario → Azul Colsubsidio #0067B1 */
+        /* Primario → Azul InvenCheck */
         primary: {
           DEFAULT:    "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
         },
 
-        /* Secundario → Amarillo Colsubsidio #FFD000 */
+        /* Secundario → Amarillo InvenCheck */
         secondary: {
           DEFAULT:    "hsl(var(--secondary))",
           foreground: "hsl(var(--secondary-foreground))",
@@ -84,28 +84,28 @@ const config: Config = {
          * Usar sólo cuando los tokens semánticos no sean suficientes
          * (ej. ilustraciones, brand moments, charts). */
         amarillo: {
-          "20":  "hsl(var(--csb-amarillo-20))",
-          "40":  "hsl(var(--csb-amarillo-40))",
-          "60":  "hsl(var(--csb-amarillo-60))",
-          "80":  "hsl(var(--csb-amarillo-80))",
-          "100": "hsl(var(--csb-amarillo-100))",
-          DEFAULT: "hsl(var(--csb-amarillo-100))",
+          "20":  "hsl(var(--ivc-amarillo-20))",
+          "40":  "hsl(var(--ivc-amarillo-40))",
+          "60":  "hsl(var(--ivc-amarillo-60))",
+          "80":  "hsl(var(--ivc-amarillo-80))",
+          "100": "hsl(var(--ivc-amarillo-100))",
+          DEFAULT: "hsl(var(--ivc-amarillo-100))",
         },
         azul: {
-          "20":  "hsl(var(--csb-azul-20))",
-          "40":  "hsl(var(--csb-azul-40))",
-          "60":  "hsl(var(--csb-azul-60))",
-          "80":  "hsl(var(--csb-azul-80))",
-          "100": "hsl(var(--csb-azul-100))",
-          DEFAULT: "hsl(var(--csb-azul-100))",
+          "20":  "hsl(var(--ivc-azul-20))",
+          "40":  "hsl(var(--ivc-azul-40))",
+          "60":  "hsl(var(--ivc-azul-60))",
+          "80":  "hsl(var(--ivc-azul-80))",
+          "100": "hsl(var(--ivc-azul-100))",
+          DEFAULT: "hsl(var(--ivc-azul-100))",
         },
         grafito: {
-          "20":  "hsl(var(--csb-grafito-20))",
-          "40":  "hsl(var(--csb-grafito-40))",
-          "60":  "hsl(var(--csb-grafito-60))",
-          "80":  "hsl(var(--csb-grafito-80))",
-          "100": "hsl(var(--csb-grafito-100))",
-          DEFAULT: "hsl(var(--csb-grafito-100))",
+          "20":  "hsl(var(--ivc-grafito-20))",
+          "40":  "hsl(var(--ivc-grafito-40))",
+          "60":  "hsl(var(--ivc-grafito-60))",
+          "80":  "hsl(var(--ivc-grafito-80))",
+          "100": "hsl(var(--ivc-grafito-100))",
+          DEFAULT: "hsl(var(--ivc-grafito-100))",
         },
       },
 
@@ -124,10 +124,10 @@ const config: Config = {
           from: { height: "var(--radix-accordion-content-height)" },
           to:   { height: "0" },
         },
-        /* Pulse ring usando amarillo Colsubsidio (alerta de anomalía) */
+        /* Pulse ring usando amarillo InvenCheck (alerta de anomalía) */
         "pulse-ring": {
-          "0%":   { boxShadow: "0 0 0 0 hsl(var(--csb-amarillo-100) / 0.65)" },
-          "100%": { boxShadow: "0 0 0 18px hsl(var(--csb-amarillo-100) / 0)" },
+          "0%":   { boxShadow: "0 0 0 0 hsl(var(--ivc-amarillo-100) / 0.65)" },
+          "100%": { boxShadow: "0 0 0 18px hsl(var(--ivc-amarillo-100) / 0)" },
         },
         /* Shimmer para skeletons en bodega */
         shimmer: {

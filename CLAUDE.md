@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-InvenCheck — a PWA for Colsubsidio Hotelería that replaces manual paper-based physical inventory counts with voice-dictated counts. Operators dictate what they counted ("quince kilos de papa criolla"), it's matched against the real product catalog in real time, and anomalies (implausible quantities, ambiguous units) block consolidation until confirmed or corrected. See `client/src/app/inventario/[id]/page.tsx` for the core screen.
+InvenCheck — a PWA for hotel storage and food service operations that replaces manual paper-based physical inventory counts with voice-dictated counts. Operators dictate what they counted ("quince kilos de papa criolla"), it's matched against the real product catalog in real time, and anomalies (implausible quantities, ambiguous units) block consolidation until confirmed or corrected. See `client/src/app/inventario/[id]/page.tsx` for the core screen.
 
 Monorepo: npm workspaces — `server` (NestJS + Prisma/Postgres), `client` (Next.js 14 App Router PWA), `shared` (types/enums consumed by both).
 

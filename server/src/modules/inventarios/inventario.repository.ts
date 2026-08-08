@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Inject, Injectable } from '@nestjs/common';
+import { ContextoOrganizacionService } from '../../prisma/contexto-organizacion.service';
+import { PRISMA_ORG, type PrismaConAlcance } from '../../prisma/prisma.module';
 import {
   EstadoInventario,
   Prisma,
@@ -82,12 +83,34 @@ export interface CrearAlertaInput {
  * dentro de una sola transacción atómica cuando el llamador lo necesita
  * (ver `ejecutarEnTransaccion` y su uso en
  * `InventarioService.procesarLineaArticulo`).
+ *
+ * Se pide estructuralmente solo lo que estos métodos usan (`Pick`) en vez de
+ * reconstruir el tipo completo de una transacción: el cliente extendido por
+ * organización (`PrismaConAlcance`) no es un `PrismaClient` a secas —
+ * `$extends` le da un tipo propio — así que `Prisma.TransactionClient` ya no
+ * describe correctamente ni a él ni a su `$transaction(tx => ...)`.
  */
-type ClientePrisma = Prisma.TransactionClient | PrismaService;
+export type ClientePrisma = Pick<
+  PrismaConAlcance,
+  'itemInventario' | 'alertaInventario' | 'inventario'
+>;
 
 @Injectable()
 export class InventarioRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PRISMA_ORG) private readonly prisma: PrismaConAlcance,
+    private readonly contexto: ContextoOrganizacionService,
+  ) {}
+
+  private organizacionIdRequerida(): string {
+    const organizacionId = this.contexto.actual()?.organizacionId;
+    if (!organizacionId) {
+      throw new Error(
+        'Esta operación de InventarioRepository requiere un alcance de organización abierto',
+      );
+    }
+    return organizacionId;
+  }
 
   /**
    * Corre `fn` dentro de una transacción interactiva de Postgres — todas
@@ -99,9 +122,7 @@ export class InventarioRepository {
    * podía dejar el ítem marcado como anómalo sin ninguna alerta que lo
    * explicara, o viceversa.
    */
-  ejecutarEnTransaccion<T>(
-    fn: (tx: Prisma.TransactionClient) => Promise<T>,
-  ): Promise<T> {
+  ejecutarEnTransaccion<T>(fn: (tx: ClientePrisma) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(fn);
   }
 
@@ -113,6 +134,7 @@ export class InventarioRepository {
   }): Promise<Inventario> {
     return this.prisma.inventario.create({
       data: {
+        organizacionId: this.organizacionIdRequerida(),
         almacenId: data.almacenId,
         usuarioId: data.usuarioId,
         auditorId: data.auditorId,
@@ -184,7 +206,7 @@ export class InventarioRepository {
         unidadUsada: data.unidadUsada,
         esAnomalia: data.esAnomalia,
       },
-      create: data,
+      create: { ...data, organizacionId: this.organizacionIdRequerida() },
     });
   }
 
@@ -219,6 +241,7 @@ export class InventarioRepository {
         unidadUsada: input.unidadUsada,
       },
       create: {
+        organizacionId: this.organizacionIdRequerida(),
         inventarioId: input.inventarioId,
         articuloId: input.articuloId,
         teorico: input.teoricoInicial,
@@ -279,6 +302,7 @@ export class InventarioRepository {
       },
       update: { esAnomalia: true },
       create: {
+        organizacionId: this.organizacionIdRequerida(),
         inventarioId: input.inventarioId,
         articuloId: input.articuloId,
         teorico: input.teoricoInicial,
@@ -315,9 +339,10 @@ export class InventarioRepository {
     client: ClientePrisma = this.prisma,
   ): Promise<number> {
     if (alertas.length === 0) return 0;
+    const organizacionId = this.organizacionIdRequerida();
 
     const { count } = await client.alertaInventario.createMany({
-      data: alertas,
+      data: alertas.map((alerta) => ({ ...alerta, organizacionId })),
       skipDuplicates: true,
     });
     return count;
@@ -416,6 +441,7 @@ export class InventarioRepository {
       });
       const auditoria = await tx.inventario.create({
         data: {
+          organizacionId: original.organizacionId,
           almacenId: original.almacenId,
           usuarioId: auditorId,
           fechaCorte: original.fechaCorte,

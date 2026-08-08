@@ -47,23 +47,33 @@ describe('GET /reportes/variacion (e2e)', () => {
       [10, 12, false],
       [10, 50, true],
     ] as const) {
-      const inventario = await ctx.prisma.inventario.create({
-        data: {
-          almacenId: almacen.id,
-          usuarioId: 'test-usuario',
-          fechaCorte: new Date(),
-        },
-      });
-      await ctx.prisma.itemInventario.create({
-        data: {
-          inventarioId: inventario.id,
-          articuloId: articulo.id,
-          teorico,
-          conteoFisico,
-          unidadUsada: UnidadMedida.KILOGRAMO,
-          esAnomalia,
-        },
-      });
+      const inventario = await ctx.prisma.sinAlcanceDeOrganizacion(
+        'e2e: sembrar inventario directo para el reporte',
+        () =>
+          ctx.prisma.inventario.create({
+            data: {
+              organizacionId: almacen.organizacionId,
+              almacenId: almacen.id,
+              usuarioId: 'test-usuario',
+              fechaCorte: new Date(),
+            },
+          }),
+      );
+      await ctx.prisma.sinAlcanceDeOrganizacion(
+        'e2e: sembrar item de inventario directo para el reporte',
+        () =>
+          ctx.prisma.itemInventario.create({
+            data: {
+              organizacionId: almacen.organizacionId,
+              inventarioId: inventario.id,
+              articuloId: articulo.id,
+              teorico,
+              conteoFisico,
+              unidadUsada: UnidadMedida.KILOGRAMO,
+              esAnomalia,
+            },
+          }),
+      );
     }
 
     const res = await agent(ctx.app)

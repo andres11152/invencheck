@@ -4,7 +4,7 @@ import type { EstadoInventario } from "@invencheck/shared";
 import { Badge } from "@/components/ui/badge";
 import { formatFecha } from "@/lib/format";
 import type { InventarioDetalle } from "@/lib/types";
-import { ColsubsidioLogo } from "@/components/colsubsidio-logo";
+import { InvenCheckLogo } from "@/components/invencheck-logo";
 
 const ESTADO_TONO: Record<EstadoInventario, "secondary" | "warning" | "success" | "default"> = {
   BORRADOR: "secondary",
@@ -44,9 +44,9 @@ export function InventarioHeader({ inventario }: { inventario: InventarioDetalle
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          {/* Ícono K Colsubsidio sobre fondo azul primario */}
+          {/* Logo InvenCheck */}
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary p-1.5 shadow-md">
-            <ColsubsidioLogo variant="color" size="sm" />
+            <InvenCheckLogo variant="color" size="sm" />
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight sm:text-2xl">

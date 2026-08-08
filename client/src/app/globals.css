@@ -3,8 +3,8 @@
 @tailwind utilities;
 
 /* =============================================================================
-   COLSUBSIDIO DESIGN SYSTEM — TOKEN LAYER
-   Fuente oficial de la marca: Pantone 109 C / Pantone 2196 C / Pantone Cool Gray 11 C
+   INVENCHECK DESIGN SYSTEM — TOKEN LAYER
+   Fuente oficial de la marca: InvenCheck Palette
    
    ESTRUCTURA:
      1. Paleta de marca (primitivos) — nunca usar directamente en componentes
@@ -13,35 +13,35 @@
    ============================================================================= */
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   1. PRIMITIVOS DE MARCA COLSUBSIDIO
+   1. PRIMITIVOS DE MARCA INVENCHECK
    Definidos como variables @property-safe en :root para que Tailwind
    + CSS pueda leerlas sin importar el modo (siempre disponibles).
    ───────────────────────────────────────────────────────────────────────────── */
 :root {
-  /* Amarillo Colsubsidio — Pantone 109 C · #FFD000 · rgb(255,208,0) */
-  --csb-amarillo-100: 49 100% 50%;    /* #FFD000 */
-  --csb-amarillo-80:  49 100% 60%;    /* #FFD933 */
-  --csb-amarillo-60:  49 100% 70%;    /* #FFE266 */
-  --csb-amarillo-40:  49 100% 80%;    /* #FFEEAA */
-  --csb-amarillo-20:  49 100% 92%;    /* #FFF8D6 */
+  /* Amarillo InvenCheck */
+  --ivc-amarillo-100: 49 100% 50%;    /* #FFD000 */
+  --ivc-amarillo-80:  49 100% 60%;    /* #FFD933 */
+  --ivc-amarillo-60:  49 100% 70%;    /* #FFE266 */
+  --ivc-amarillo-40:  49 100% 80%;    /* #FFEEAA */
+  --ivc-amarillo-20:  49 100% 92%;    /* #FFF8D6 */
 
-  /* Azul Colsubsidio — Pantone 2196 C · #0067B1 · rgb(0,103,177) */
-  --csb-azul-100: 208 100% 35%;       /* #0067B1 */
-  --csb-azul-80:  208  76% 44%;       /* #1E7FC4 */
-  --csb-azul-60:  208  60% 55%;       /* #5099CE */
-  --csb-azul-40:  208  57% 68%;       /* #86B8DC */
-  --csb-azul-20:  208  55% 85%;       /* #C2D9EE */
+  /* Azul InvenCheck */
+  --ivc-azul-100: 208 100% 35%;       /* #0067B1 */
+  --ivc-azul-80:  208  76% 44%;       /* #1E7FC4 */
+  --ivc-azul-60:  208  60% 55%;       /* #5099CE */
+  --ivc-azul-40:  208  57% 68%;       /* #86B8DC */
+  --ivc-azul-20:  208  55% 85%;       /* #C2D9EE */
 
-  /* Grafito Colsubsidio — Pantone Cool Gray 11 C · #575756 · rgb(87,87,86) */
-  --csb-grafito-100: 60  1% 34%;      /* #575756 */
-  --csb-grafito-80:  60  1% 45%;      /* #737372 */
-  --csb-grafito-60:  60  1% 57%;      /* #929291 */
-  --csb-grafito-40:  60  1% 73%;      /* #BABAB9 */
-  --csb-grafito-20:  60  1% 88%;      /* #E0E0DF */
+  /* Grafito InvenCheck */
+  --ivc-grafito-100: 60  1% 34%;      /* #575756 */
+  --ivc-grafito-80:  60  1% 45%;      /* #737372 */
+  --ivc-grafito-60:  60  1% 57%;      /* #929291 */
+  --ivc-grafito-40:  60  1% 73%;      /* #BABAB9 */
+  --ivc-grafito-20:  60  1% 88%;      /* #E0E0DF */
 
   /* Blanco y Negro absolutos */
-  --csb-blanco: 0 0% 100%;
-  --csb-negro:  0 0% 5%;
+  --ivc-blanco: 0 0% 100%;
+  --ivc-negro:  0 0% 5%;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -59,12 +59,12 @@
   --popover:          208 28% 11%;
   --popover-foreground: 208 20% 93%;
 
-  /* ─── PRIMARIO = Azul Colsubsidio ─── */
-  --primary:          208 100% 35%;   /* csb-azul-100 → #0067B1              */
+  /* ─── PRIMARIO = Azul InvenCheck ─── */
+  --primary:          208 100% 35%;   /* ivc-azul-100 → #0067B1              */
   --primary-foreground: 0 0% 100%;    /* Texto blanco sobre azul             */
 
-  /* ─── SECUNDARIO = Amarillo Colsubsidio ─── */
-  --secondary:        49 100% 50%;    /* csb-amarillo-100 → #FFD000          */
+  /* ─── SECUNDARIO = Amarillo InvenCheck ─── */
+  --secondary:        49 100% 50%;    /* ivc-amarillo-100 → #FFD000          */
   --secondary-foreground: 208 100% 22%; /* Texto azul oscuro sobre amarillo  */
 
   /* Superficies muted y accent */
@@ -78,27 +78,27 @@
   --destructive:      0  72% 51%;
   --destructive-foreground: 0 0% 98%;
 
-  --warning:          49 100% 50%;    /* Amarillo Colsubsidio como warning    */
+  --warning:          49 100% 50%;    /* Amarillo InvenCheck como warning    */
   --warning-foreground: 208 100% 22%;
 
   --success:          142 71% 45%;
   --success-foreground: 144 61% 8%;
 
-  --info:             208 100% 35%;   /* Azul Colsubsidio como info          */
+  --info:             208 100% 35%;   /* Azul InvenCheck como info          */
   --info-foreground:  0 0% 100%;
 
   /* Bordes e inputs */
   --border:           208 25% 22%;
   --input:            208 25% 22%;
-  --ring:             49 100% 50%;    /* Focus ring = Amarillo Colsubsidio   */
+  --ring:             49 100% 50%;    /* Focus ring = Amarillo InvenCheck   */
 
   /* Radio de borde base */
   --radius: 0.75rem;
 
   /* ─── Tokens de marca expuestos para uso directo cuando sea necesario ─── */
-  --brand-primary:    hsl(var(--csb-azul-100));
-  --brand-secondary:  hsl(var(--csb-amarillo-100));
-  --brand-neutral:    hsl(var(--csb-grafito-100));
+  --brand-primary:    hsl(var(--ivc-azul-100));
+  --brand-secondary:  hsl(var(--ivc-amarillo-100));
+  --brand-neutral:    hsl(var(--ivc-grafito-100));
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -154,35 +154,35 @@ body {
    * `ui/card.tsx`, `ui/dialog.tsx`, `ui/select.tsx`, `ui/dropdown-menu.tsx`.
    */
 
-  /* Gradiente de marca Colsubsidio — uso en headers/hero */
+  /* Gradiente de marca InvenCheck — uso en headers/hero */
   .bg-brand-gradient {
     background: linear-gradient(
       135deg,
-      hsl(var(--csb-azul-100)) 0%,
-      hsl(var(--csb-azul-80)) 60%,
-      hsl(var(--csb-azul-60)) 100%
+      hsl(var(--ivc-azul-100)) 0%,
+      hsl(var(--ivc-azul-80)) 60%,
+      hsl(var(--ivc-azul-60)) 100%
     );
   }
 
   /* Acento amarillo brillante — CTAs, badges de alta visibilidad */
   .bg-amarillo {
-    background-color: hsl(var(--csb-amarillo-100));
-    color: hsl(var(--csb-azul-100));
+    background-color: hsl(var(--ivc-amarillo-100));
+    color: hsl(var(--ivc-azul-100));
   }
 
   /* Borde de énfasis de marca */
   .border-brand {
-    border-color: hsl(var(--csb-amarillo-100));
+    border-color: hsl(var(--ivc-amarillo-100));
   }
 
   /* Texto de marca azul */
   .text-brand-azul {
-    color: hsl(var(--csb-azul-100));
+    color: hsl(var(--ivc-azul-100));
   }
 
   /* Texto de marca amarillo */
   .text-brand-amarillo {
-    color: hsl(var(--csb-amarillo-100));
+    color: hsl(var(--ivc-amarillo-100));
   }
 
   /* Forzar que el icono de calendario nativo de inputs date se vea blanco en desktop y mobile */

@@ -5,6 +5,7 @@ import type { Articulo } from '../../generated/prisma/client';
 function buildArticulo(overrides: Partial<Articulo> = {}): Articulo {
   return {
     id: 'art-1',
+    organizacionId: 'org-test-1',
     sku: '123',
     nombre: 'PAPA CRIOLLA',
     aliases: ['papa amarilla'],

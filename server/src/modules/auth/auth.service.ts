@@ -36,6 +36,7 @@ export class AuthService {
       sub: usuario.id,
       email: usuario.email,
       rol: usuario.rol,
+      org: usuario.organizacionId,
     };
 
     return {
@@ -45,6 +46,7 @@ export class AuthService {
         email: usuario.email,
         nombre: usuario.nombre,
         rol: usuario.rol,
+        organizacionId: usuario.organizacionId,
       },
     };
   }
@@ -58,6 +60,7 @@ export class AuthService {
       email: usuario.email,
       nombre: usuario.nombre,
       rol: usuario.rol,
+      organizacionId: usuario.organizacionId,
     };
   }
 }

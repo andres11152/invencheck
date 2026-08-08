@@ -18,6 +18,7 @@ import {
 function buildInventario(overrides: Partial<Inventario> = {}): Inventario {
   return {
     id: 'inv-1',
+    organizacionId: 'org-test-1',
     almacenId: 'alm-1',
     usuarioId: 'user-1',
     auditorId: null,
@@ -168,6 +169,7 @@ function buildAlerta(
 ): AlertaInventario {
   return {
     id: 'alerta-1',
+    organizacionId: 'org-test-1',
     inventarioId: 'inv-1',
     itemInventarioId: 'item-1',
     tipo: TipoAlerta.ANOMALIA_CANTIDAD,
@@ -290,6 +292,7 @@ describe('InventarioService.resolverAlerta / revisarAlerta', () => {
 function buildArticulo(overrides: Partial<Articulo> = {}): Articulo {
   return {
     id: 'art-1',
+    organizacionId: 'org-test-1',
     sku: null,
     nombre: 'ARTICULO TEST',
     aliases: [],

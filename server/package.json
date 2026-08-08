@@ -19,6 +19,7 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "pretest:e2e": "tsx test/utils/migrate-test-db.ts",
     "test:e2e": "NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-e2e.json",
+    "test:catalogo-real": "NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-catalogo.json",
     "postinstall": "prisma generate",
     "db:up": "docker compose up -d",
     "prisma:generate": "prisma generate",

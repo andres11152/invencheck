@@ -1,7 +1,7 @@
 {
   "name": "InvenCheck — Toma Física de Inventario",
   "short_name": "InvenCheck",
-  "description": "Toma física de inventario por voz para bodegas Colsubsidio.",
+  "description": "Toma física de inventario por voz para bodegas y almacenes hoteleros.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

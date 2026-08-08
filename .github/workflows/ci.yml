@@ -54,7 +54,13 @@ jobs:
       - name: server — e2e tests
         run: npm run test:e2e -w server
         env:
-          DATABASE_URL: postgresql://invencheck:invencheck@localhost:5432/invencheck_test?schema=public
+          # Rol SIN privilegios, igual que en producción. Si los e2e corrieran
+          # como superusuario, las policies de RLS quedarían inertes y los
+          # tests de aislamiento entre organizaciones pasarían sin probar nada.
+          # El rol lo crea la migración _rol_aplicacion_sin_privilegios, que
+          # aplica `pretest:e2e` usando DATABASE_URL_MIGRATIONS.
+          DATABASE_URL: postgresql://invencheck_app:invencheck_app@localhost:5432/invencheck_test?schema=public
+          DATABASE_URL_MIGRATIONS: postgresql://invencheck:invencheck@localhost:5432/invencheck_test?schema=public
           JWT_SECRET: ci-test-secret-not-for-real-use
           JWT_EXPIRES_IN_SECONDS: 43200
           ERP_WEBHOOK_API_KEY: ci-test-erp-key

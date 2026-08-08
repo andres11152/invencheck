@@ -23,9 +23,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "InvenCheck — Toma Física de Inventario | Colsubsidio",
+  title: "InvenCheck — Toma Física de Inventario",
   description:
-    "Captura inteligente de inventario físico por voz para bodegas y hoteles Colsubsidio. Reduce errores de transcripción y acelera el cierre mensual.",
+    "Captura inteligente de inventario físico por voz para bodegas y almacenes hoteleros. Reduce errores de transcripción y acelera el cierre mensual.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

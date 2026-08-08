@@ -3,7 +3,7 @@
  *
  * Este componente es invisible en pantalla (`hidden`) y solo se muestra
  * al imprimir (`print-only`). Renderiza el acta corporativa completa:
- * encabezado con logo Colsubsidio, metadatos del inventario, tabla
+ * encabezado con logo InvenCheck, metadatos del inventario, tabla
  * compacta de ítems, resumen de alertas y sección de firmas.
  */
 
@@ -16,6 +16,7 @@ import {
   formatNumero,
   TIPO_ALERTA_LABEL,
 } from "@/lib/format";
+import { InvenCheckLogo } from "@/components/invencheck-logo";
 
 const ESTADO_LABEL: Record<EstadoInventario, string> = {
   BORRADOR: "Borrador",
@@ -42,19 +43,14 @@ export function PrintActa({
       {/* ═══════════════════════ ENCABEZADO CORPORATIVO ═══════════════════════ */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "3px solid #0067B1", paddingBottom: "12px", marginBottom: "16px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          {/* Logo Colsubsidio (img nativa para impresión fiable) */}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/brand/logo-color.png"
-            alt="Colsubsidio"
-            style={{ width: "40px", height: "40px", objectFit: "contain" }}
-          />
+          {/* Logo InvenCheck */}
+          <InvenCheckLogo variant="color" size="lg" />
           <div>
             <p style={{ fontSize: "18px", fontWeight: "bold", color: "#0067B1", margin: 0 }}>
-              COLSUBSIDIO
+              INVENCHECK
             </p>
             <p style={{ fontSize: "9px", color: "#575756", margin: 0, letterSpacing: "0.5px" }}>
-              Hotelería y Turismo
+              Gestión de Inventario
             </p>
           </div>
         </div>
@@ -206,7 +202,7 @@ export function PrintActa({
       {/* ═══════════════════════ PIE DE PÁGINA ═══════════════════════ */}
       <div style={{ marginTop: "24px", borderTop: "1px solid #ddd", paddingTop: "8px", textAlign: "center" }}>
         <p style={{ fontSize: "8px", color: "#999", margin: 0 }}>
-          Colsubsidio — Hotelería y Turismo · Documento generado automáticamente por InvenCheck ·
+          InvenCheck · Gestión de Inventario ·
           ID Inventario: {inventario.id} · Generado: {ahora}
         </p>
       </div>

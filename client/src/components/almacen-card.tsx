@@ -2,7 +2,7 @@
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ColsubsidioLogo } from "@/components/colsubsidio-logo";
+import { InvenCheckLogo } from "@/components/invencheck-logo";
 import { cn } from "@/lib/utils";
 import type { Almacen } from "@/lib/types";
 
@@ -25,7 +25,7 @@ export function AlmacenCard({
         /* Estado base: borde sutil, transición suave + lift de hover */
         "cursor-pointer p-4 transition-all duration-200",
         "hover:-translate-y-0.5 hover:border-primary/50 hover:bg-accent/40 hover:shadow-lg active:translate-y-0",
-        /* Estado seleccionado: azul primario Colsubsidio + anillo amarillo */
+        /* Estado seleccionado: azul primario + anillo amarillo */
         seleccionado && [
           "border-primary bg-primary/10",
           "ring-2 ring-secondary ring-offset-1 ring-offset-background",
@@ -34,16 +34,16 @@ export function AlmacenCard({
       )}
     >
       <div className="flex items-start gap-3">
-        {/* Logo K Colsubsidio: sobre bg-secondary/20 en reposo → bg-primary al seleccionar */}
+        {/* Logo InvenCheck: sobre bg-secondary/20 en reposo → bg-primary al seleccionar */}
         <div
           className={cn(
             "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg p-1.5 transition-colors duration-200",
             seleccionado
-              ? "bg-primary"         /* Azul Colsubsidio */
+              ? "bg-primary"         /* Azul */
               : "bg-secondary/20",   /* Amarillo tenue */
           )}
         >
-          <ColsubsidioLogo variant="color" size="xs" />
+          <InvenCheckLogo variant="color" size="xs" />
         </div>
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold leading-tight">{almacen.nombre}</p>

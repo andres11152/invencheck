@@ -40,6 +40,7 @@ describe('InventarioController', () => {
     email: 'op@demo.com',
     nombre: 'Op',
     rol: RolUsuario.OPERARIO,
+    organizacionId: 'org-test-1',
   };
 
   it('crear() usa usuario.id del JWT como usuarioId, nunca un valor del body', () => {

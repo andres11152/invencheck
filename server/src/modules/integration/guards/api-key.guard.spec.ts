@@ -1,6 +1,7 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 import { ApiKeyGuard } from './api-key.guard';
+import { ContextoOrganizacionService } from '../../../prisma/contexto-organizacion.service';
 import type { EnvironmentVariables } from '../../../config/env.validation';
 
 function buildContext(
@@ -17,12 +18,13 @@ function buildGuard(expectedKey: string) {
   const configService = {
     get: jest.fn().mockReturnValue(expectedKey),
   } as unknown as ConfigService<EnvironmentVariables, true>;
-  return new ApiKeyGuard(configService);
+  const contexto = new ContextoOrganizacionService();
+  return { guard: new ApiKeyGuard(configService, contexto), contexto };
 }
 
 describe('ApiKeyGuard', () => {
   it('rechaza si falta el header X-Api-Key', () => {
-    const guard = buildGuard('la-key-correcta');
+    const { guard } = buildGuard('la-key-correcta');
 
     expect(() => guard.canActivate(buildContext({}))).toThrow(
       UnauthorizedException,
@@ -30,7 +32,7 @@ describe('ApiKeyGuard', () => {
   });
 
   it('rechaza si la key no coincide', () => {
-    const guard = buildGuard('la-key-correcta');
+    const { guard } = buildGuard('la-key-correcta');
 
     expect(() =>
       guard.canActivate(buildContext({ 'x-api-key': 'otra-key' })),
@@ -38,10 +40,14 @@ describe('ApiKeyGuard', () => {
   });
 
   it('permite el acceso si la key coincide', () => {
-    const guard = buildGuard('la-key-correcta');
+    const { guard, contexto } = buildGuard('la-key-correcta');
 
-    expect(
+    // El guard asigna la organización al alcance actual — igual que
+    // AlcanceOrganizacionMiddleware en producción, acá se abre a mano.
+    const resultado = contexto.ejecutar({}, () =>
       guard.canActivate(buildContext({ 'x-api-key': 'la-key-correcta' })),
-    ).toBe(true);
+    );
+
+    expect(resultado).toBe(true);
   });
 });

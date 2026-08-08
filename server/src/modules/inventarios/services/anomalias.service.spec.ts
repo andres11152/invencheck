@@ -12,6 +12,7 @@ import {
 function crearArticulo(overrides: Partial<Articulo> = {}): Articulo {
   return {
     id: 'articulo-1',
+    organizacionId: 'org-test-1',
     sku: 'SKU-1',
     nombre: 'PAPA CRIOLLA',
     aliases: [],

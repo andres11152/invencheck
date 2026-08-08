@@ -1,5 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Inject, Injectable } from '@nestjs/common';
+import { ContextoOrganizacionService } from '../../prisma/contexto-organizacion.service';
+import { PRISMA_ORG, type PrismaConAlcance } from '../../prisma/prisma.module';
+import { alcanceOrg } from '../../prisma/sql-alcance.util';
 import {
   Prisma,
   type Articulo,
@@ -22,7 +24,10 @@ export interface ArticuloMatch extends Articulo {
 
 @Injectable()
 export class ArticuloRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PRISMA_ORG) private readonly prisma: PrismaConAlcance,
+    private readonly contexto: ContextoOrganizacionService,
+  ) {}
 
   findAll(
     params: { categoria?: string; limit: number; offset?: number } = {
@@ -41,19 +46,33 @@ export class ArticuloRepository {
     return this.prisma.articulo.findUnique({ where: { id } });
   }
 
+  /**
+   * `sku` solo es único DENTRO de la organización actual, así que la clave
+   * real es el índice compuesto `organizacionId_sku`.
+   */
   findBySku(sku: string): Promise<Articulo | null> {
-    return this.prisma.articulo.findUnique({ where: { sku } });
+    const organizacionId = this.organizacionIdRequerida();
+    return this.prisma.articulo.findUnique({
+      where: { organizacionId_sku: { organizacionId, sku } },
+    });
   }
 
   count(where: { esProcesado?: boolean } = {}): Promise<number> {
     return this.prisma.articulo.count({ where });
   }
 
-  /** Búsqueda parcial (ILIKE) por nombre, sku o alias. */
+  /**
+   * Búsqueda parcial (ILIKE) por nombre, sku o alias.
+   *
+   * SQL crudo: la extensión de Prisma no puede reescribirlo, así que el
+   * aislamiento real acá lo dan las policies de RLS. El predicado explícito
+   * de abajo es una segunda capa de claridad y de uso de índice.
+   */
   searchByQuery(
     query: string,
     params: { categoria?: string; limit: number },
   ): Promise<Articulo[]> {
+    const organizacionId = this.organizacionIdRequerida();
     const pattern = `%${query}%`;
     const categoriaFilter = params.categoria
       ? Prisma.sql`AND a.categoria = ${params.categoria}`
@@ -68,6 +87,7 @@ export class ArticuloRepository {
         OR EXISTS (SELECT 1 FROM unnest(a.aliases) AS alias WHERE alias ILIKE ${pattern})
       )
       ${categoriaFilter}
+      ${alcanceOrg('a', organizacionId)}
       ORDER BY a.nombre ASC
       LIMIT ${params.limit}
     `;
@@ -76,11 +96,15 @@ export class ArticuloRepository {
   /**
    * Ranking por similitud de trigramas (pg_trgm) + bonificación por palabra clave
    * exacta contra nombre y aliases, insensible a acentos (unaccent).
+   *
+   * SQL crudo — ver la nota de `searchByQuery` sobre por qué el aislamiento
+   * real acá lo dan las policies de RLS.
    */
   findBestMatches(
     normalizedQuery: string,
     limit = 5,
   ): Promise<ArticuloMatch[]> {
+    const organizacionId = this.organizacionIdRequerida();
     return this.prisma.$queryRaw<ArticuloMatch[]>`
       SELECT a.*, (
         GREATEST(
@@ -90,13 +114,15 @@ export class ArticuloRepository {
             FROM unnest(a.aliases) AS alias
           ), 0)
         )
-        + CASE 
+        + CASE
             WHEN public.f_unaccent(lower(a.nombre)) = ${normalizedQuery} THEN 0.5
             WHEN public.f_unaccent(lower(a.nombre)) ILIKE ${'%' + normalizedQuery + '%'} THEN 0.25
-            ELSE 0 
+            ELSE 0
           END
       ) AS score
       FROM articulos a
+      WHERE 1 = 1
+      ${alcanceOrg('a', organizacionId)}
       ORDER BY score DESC
       LIMIT ${limit}
     `;
@@ -122,27 +148,32 @@ export class ArticuloRepository {
     excludeId: string,
     limit = 5,
   ): Promise<Articulo[]> {
+    const organizacionId = this.organizacionIdRequerida();
     return this.prisma.$queryRaw<Articulo[]>`
       SELECT a.*
       FROM articulos a
       WHERE a.id != ${excludeId}
         AND public.f_unaccent(lower(a.nombre)) LIKE ${normalizedPrefix + ' %'}
+      ${alcanceOrg('a', organizacionId)}
       ORDER BY length(a.nombre) ASC, a.nombre ASC
       LIMIT ${limit}
     `;
   }
 
   /**
-   * Upsert masivo por `sku` (si existe) o `nombre` (catálogo maestro).
+   * Upsert masivo por `sku` (si existe) o `nombre` (catálogo maestro),
+   * ambos únicos DENTRO de la organización actual.
    *
    * Optimizado en 2 fases para eliminar la latencia N+1:
    * 1. Precarga en lote (1 sola consulta SELECT `findMany`) de todos los registros
-   *    existentes que coincidan por `sku` o `nombre`.
+   *    existentes que coincidan por `sku` o `nombre` — ya auto-scoped por la
+   *    extensión de Prisma, así que solo trae filas de esta organización.
    * 2. Mapeo en memoria y ejecución de todas las operaciones (update/create)
    *    dentro de un solo bloque `$transaction` de Prisma.
    */
   async upsertMany(rows: ArticuloUpsertInput[]): Promise<number> {
     if (rows.length === 0) return 0;
+    const organizacionId = this.organizacionIdRequerida();
 
     const skus = rows.map((r) => r.sku).filter((s): s is string => Boolean(s));
     const nombres = rows.map((r) => r.nombre);
@@ -186,7 +217,9 @@ export class ArticuloRepository {
           this.prisma.articulo.update({ where: { id: existing.id }, data }),
         );
       } else {
-        ops.push(this.prisma.articulo.create({ data }));
+        ops.push(
+          this.prisma.articulo.create({ data: { ...data, organizacionId } }),
+        );
       }
     }
 
@@ -202,5 +235,15 @@ export class ArticuloRepository {
       });
     }
     return rows.length;
+  }
+
+  private organizacionIdRequerida(): string {
+    const organizacionId = this.contexto.actual()?.organizacionId;
+    if (!organizacionId) {
+      throw new Error(
+        'Esta operación de ArticuloRepository requiere un alcance de organización abierto',
+      );
+    }
+    return organizacionId;
   }
 }

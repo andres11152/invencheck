@@ -1,5 +1,11 @@
-import { Module } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { AlcanceOrganizacionMiddleware } from './common/middleware/alcance-organizacion.middleware';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { validateEnv } from './config/env.validation';
@@ -50,4 +56,18 @@ import { RolesGuard } from './modules/auth/guards/roles.guard';
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Abre el alcance de organización para TODA request, antes de que
+    // corran los guards — `JwtStrategy.validate` lo completa después con la
+    // organización del token. Ver AlcanceOrganizacionMiddleware sobre por
+    // qué esto no puede ser un interceptor.
+    //
+    // `{*splat}` y no `*`: Nest 11 corre sobre Express 5 / path-to-regexp 8,
+    // donde el comodín pelado `*` ya no es un patrón válido. Las llaves lo
+    // hacen opcional, de modo que también matchee la raíz.
+    consumer
+      .apply(AlcanceOrganizacionMiddleware)
+      .forRoutes({ path: '{*splat}', method: RequestMethod.ALL });
+  }
+}

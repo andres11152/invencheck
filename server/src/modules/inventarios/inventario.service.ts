@@ -9,6 +9,7 @@ import { describirMotivoNoMatch } from '../articulos/articulo-text.util';
 import { AiEngineService, FuenteDictado } from '../ai-engine/ai-engine.service';
 import { AnomaliasService } from './services/anomalias.service';
 import {
+  type ClientePrisma,
   InventarioDetalle,
   InventarioRepository,
 } from './inventario.repository';
@@ -18,7 +19,6 @@ import {
 } from '../../common/utils/unit-conversion.util';
 import {
   EstadoInventario,
-  type Prisma,
   TipoAlerta,
   type Articulo,
   type Inventario,
@@ -569,7 +569,7 @@ export class InventarioService {
       unidadDictada: UnidadMedida;
       scoreMatch: number;
     },
-    tx: Prisma.TransactionClient,
+    tx: ClientePrisma,
   ): Promise<ItemProcesadoResumen> {
     const { inventarioId, articulo, cantidadDictada, unidadDictada } = params;
 
@@ -649,7 +649,7 @@ export class InventarioService {
       scoreMatch: number;
     },
     delta: number,
-    tx: Prisma.TransactionClient,
+    tx: ClientePrisma,
   ): Promise<ItemProcesadoResumen> {
     const {
       inventarioId,

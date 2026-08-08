@@ -84,7 +84,7 @@ export function VoiceCapture({
           </CardDescription>
         </div>
         <div className="flex sm:justify-end">
-          {/* Badges de estado IA usando tokens de marca Colsubsidio */}
+          {/* Badges de estado IA usando tokens de marca InvenCheck */}
           {fuenteIA === "GEMINI" && (
             <div className="flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1 text-xs font-semibold text-primary shadow-sm backdrop-blur-sm animate-in fade-in-0 zoom-in-95 duration-300">
               <span className="relative flex h-2 w-2">
@@ -174,7 +174,7 @@ export function VoiceCapture({
           className={cn(
             "text-sm font-medium transition-colors",
             escuchando && "text-destructive font-semibold",
-            procesando && "text-secondary font-semibold",   /* Amarillo Colsubsidio mientras procesa */
+            procesando && "text-secondary font-semibold",   /* Amarillo InvenCheck mientras procesa */
           )}
         >
           {estadoLabel}

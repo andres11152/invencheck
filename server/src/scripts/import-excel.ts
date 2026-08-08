@@ -2,6 +2,9 @@ import 'dotenv/config';
 import { resolve } from 'node:path';
 import ExcelJS from 'exceljs';
 import { Logger } from '@nestjs/common';
+import { ContextoOrganizacionService } from '../prisma/contexto-organizacion.service';
+import { extensionAlcanceOrganizacion } from '../prisma/extension-alcance-organizacion';
+import { ORGANIZACION_LEGADO_SLUG } from '../prisma/organizacion-legado';
 import { PrismaService } from '../prisma/prisma.service';
 import { AlmacenRepository } from '../modules/almacenes/almacen.repository';
 import type { AlmacenUpsertInput } from '../modules/almacenes/almacen.repository';
@@ -249,6 +252,12 @@ function dedupeSkusAcrossGroups(
 // Orquestación
 // ---------------------------------------------------------------------------
 
+/** `--organizacion=<slug>` — default al slug de la organización de legado (uso local sin flag). */
+function leerOrganizacionSlug(): string {
+  const flag = process.argv.find((arg) => arg.startsWith('--organizacion='));
+  return flag ? flag.slice('--organizacion='.length) : ORGANIZACION_LEGADO_SLUG;
+}
+
 async function main() {
   logger.log(`Leyendo ${XLSX_PATH}`);
   const workbook = new ExcelJS.Workbook();
@@ -264,30 +273,50 @@ async function main() {
   // `design:paramtypes`, por lo que la inyección por decoradores no aplica
   // en scripts CLI standalone. Los repositorios son clases simples, así
   // que se construyen a mano reutilizando exactamente la misma lógica de
-  // upsert que usa la capa REST.
-  const prisma = new PrismaService();
-  const almacenRepository = new AlmacenRepository(prisma);
-  const articuloRepository = new ArticuloRepository(prisma);
+  // upsert que usa la capa REST — incluida la extensión de alcance por
+  // organización, para que este script escriba con las mismas garantías
+  // que un request HTTP real.
+  const contexto = new ContextoOrganizacionService();
+  const prisma = new PrismaService(contexto);
+  const prismaOrg = prisma.$extends(extensionAlcanceOrganizacion(contexto));
+  const almacenRepository = new AlmacenRepository(prismaOrg, contexto);
+  const articuloRepository = new ArticuloRepository(prismaOrg, contexto);
+
+  const slug = leerOrganizacionSlug();
 
   try {
-    const almacenesUpserted = await almacenRepository.upsertMany(almacenes);
-    logger.log(`Almacenes upsertados: ${almacenesUpserted}`);
-
-    const articulosUpserted = await articuloRepository.upsertMany(articulos);
-    logger.log(`Artículos upsertados: ${articulosUpserted}`);
-
-    const [totalAlmacenes, totalArticulos, totalProcesados] = await Promise.all(
-      [
-        almacenRepository.count(),
-        articuloRepository.count(),
-        articuloRepository.count({ esProcesado: true }),
-      ],
+    // Lookup cross-tenant legítimo: el slug identifica la organización
+    // ANTES de poder abrir el alcance, igual que el email en el login.
+    const organizacion = await prisma.sinAlcanceDeOrganizacion(
+      `import-excel: resolver organización por slug "${slug}"`,
+      () => prisma.organizacion.findUnique({ where: { slug } }),
     );
+    if (!organizacion) {
+      throw new Error(
+        `No existe ninguna organización con slug "${slug}". Pásala con --organizacion=<slug>.`,
+      );
+    }
+    logger.log(`Organización destino: ${organizacion.nombre} (${slug})`);
 
-    logger.log('--- Resumen final en PostgreSQL ---');
-    logger.log(`Almacenes registrados: ${totalAlmacenes}`);
-    logger.log(`Artículos registrados: ${totalArticulos}`);
-    logger.log(`  · de los cuales procesados (PA): ${totalProcesados}`);
+    await contexto.ejecutarConOrganizacion(organizacion.id, async () => {
+      const almacenesUpserted = await almacenRepository.upsertMany(almacenes);
+      logger.log(`Almacenes upsertados: ${almacenesUpserted}`);
+
+      const articulosUpserted = await articuloRepository.upsertMany(articulos);
+      logger.log(`Artículos upsertados: ${articulosUpserted}`);
+
+      const [totalAlmacenes, totalArticulos, totalProcesados] =
+        await Promise.all([
+          almacenRepository.count(),
+          articuloRepository.count(),
+          articuloRepository.count({ esProcesado: true }),
+        ]);
+
+      logger.log('--- Resumen final en PostgreSQL ---');
+      logger.log(`Almacenes registrados: ${totalAlmacenes}`);
+      logger.log(`Artículos registrados: ${totalArticulos}`);
+      logger.log(`  · de los cuales procesados (PA): ${totalProcesados}`);
+    });
   } finally {
     await prisma.$disconnect();
   }

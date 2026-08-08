@@ -1,4 +1,4 @@
-// Esquema de dominio para InvenCheck (Toma Física de Inventario por Voz - Colsubsidio)
+// Esquema de dominio para InvenCheck (Toma Física de Inventario por Voz)
 // Refleja la operación real observada en BODEGAS Y STOCK.xlsx.
 // Docs: https://pris.ly/d/prisma-schema
 
@@ -43,6 +43,44 @@ enum RolUsuario {
   ADMIN
 }
 
+/// Nivel de suscripción. Los límites concretos (usuarios, bodegas,
+/// artículos, inventarios por mes) viven en `LimitesPlanService`, no acá:
+/// cambiar un cupo no debería requerir una migración de base de datos.
+enum PlanOrganizacion {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+/// Cliente del SaaS: la frontera de aislamiento de TODO el dominio. Cada
+/// fila de negocio lleva `organizacionId`, y ninguna consulta de la app
+/// puede cruzarla — lo garantizan dos capas independientes: la extensión de
+/// Prisma (`extensionAlcanceOrganizacion`, que inyecta el filtro) y las
+/// policies de Row Level Security de Postgres (que lo imponen aunque la
+/// primera falle o se use SQL crudo).
+///
+/// `slug` es el identificador legible que usan los scripts CLI
+/// (`import-excel --organizacion=<slug>`), para no tener que pasar cuids a
+/// mano.
+model Organizacion {
+  id        String           @id @default(cuid())
+  nombre    String
+  slug      String           @unique
+  plan      PlanOrganizacion @default(FREE)
+  activa    Boolean          @default(true)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  usuarios        Usuario[]
+  almacenes       Almacen[]
+  articulos       Articulo[]
+  inventarios     Inventario[]
+  itemsInventario ItemInventario[]
+  alertas         AlertaInventario[]
+
+  @@map("organizaciones")
+}
+
 /// Cuenta de operador/auditor/admin con login real. `Inventario.usuarioId`
 /// y `auditorId` NO son FK hacia acá a propósito: son un registro histórico
 /// de quién hizo cada toma (como un log de auditoría) que debe sobrevivir
@@ -50,7 +88,17 @@ enum RolUsuario {
 /// verifica en el momento de la petición vía el JWT, no por integridad
 /// referencial en la base de datos.
 model Usuario {
-  id           String     @id @default(cuid())
+  id String @id @default(cuid())
+
+  /// Un usuario pertenece a exactamente UNA organización (decisión de
+  /// producto). Por eso `email` sigue siendo único a nivel GLOBAL y no por
+  /// organización: el login no necesita preguntar "¿de qué empresa eres?",
+  /// la organización se deduce de la fila del usuario. Ese lookup por email
+  /// es la única lectura cross-tenant legítima del camino de request, y va
+  /// explícita por `PrismaService.sinAlcanceDeOrganizacion`.
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+
   nombre       String
   email        String     @unique
   passwordHash String
@@ -59,6 +107,7 @@ model Usuario {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
+  @@index([organizacionId])
   @@map("usuarios")
 }
 
@@ -66,8 +115,14 @@ model Usuario {
 /// "Restaurante Fuentes AYB"). `unidad` agrupa por unidad de negocio
 /// (ej. "Piscilago", "Hoteles") tal como aparece en la data real.
 model Almacen {
-  id        String   @id @default(cuid())
-  codigo    String   @unique
+  id String @id @default(cuid())
+
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+
+  /// Único DENTRO de su organización, no globalmente: dos clientes distintos
+  /// pueden tener una bodega "BOD-01" sin colisionar.
+  codigo    String
   nombre    String
   unidad    String
   createdAt DateTime @default(now())
@@ -75,20 +130,31 @@ model Almacen {
 
   inventarios Inventario[]
 
+  @@unique([organizacionId, codigo])
+  @@index([organizacionId])
   @@index([unidad])
   @@map("almacenes")
 }
 
 /// Ítem del catálogo maestro. `sku` es opcional porque ~260 artículos
-/// de la data real de Colsubsidio no tienen código y se identifican
+/// de la data real del catálogo no tienen código y se identifican
 /// solo por nombre; por eso se indexa pero no se marca único.
 model Articulo {
-  id                String       @id @default(cuid())
-  /// Único cuando presente; Postgres permite múltiples NULL en una columna @unique,
-  /// lo que preserva el caso real de artículos sin código.
-  sku               String?      @unique
-  /// Único a nivel de catálogo maestro: es la clave de upsert cuando no hay SKU.
-  nombre            String       @unique
+  id String @id @default(cuid())
+
+  /// El catálogo es PROPIO de cada organización: cada cliente importa el
+  /// suyo. Por eso los dos identificadores de negocio de abajo son únicos
+  /// por organización y no globalmente — dos hoteles pueden manejar el mismo
+  /// SKU o el mismo nombre de producto sin pisarse.
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+
+  /// Único (dentro de la organización) cuando está presente; Postgres permite
+  /// múltiples NULL en un índice único, lo que preserva el caso real de
+  /// artículos sin código.
+  sku               String?
+  /// Clave de upsert del catálogo cuando no hay SKU.
+  nombre            String
   aliases           String[]     @default([])
   categoria         String
   unidadEstd        UnidadMedida
@@ -101,12 +167,19 @@ model Articulo {
 
   itemsInventario ItemInventario[]
 
+  @@unique([organizacionId, sku])
+  @@unique([organizacionId, nombre])
+  @@index([organizacionId])
   @@map("articulos")
 }
 
 /// Toma física de un almacén en una fecha de corte.
 model Inventario {
-  id         String           @id @default(cuid())
+  id String @id @default(cuid())
+
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+
   almacenId  String
   almacen    Almacen          @relation(fields: [almacenId], references: [id])
   usuarioId  String
@@ -128,6 +201,7 @@ model Inventario {
   items   ItemInventario[]
   alertas AlertaInventario[]
 
+  @@index([organizacionId])
   @@index([almacenId])
   @@index([estado])
   @@map("inventarios")
@@ -136,7 +210,14 @@ model Inventario {
 /// Línea de conteo: compara el valor teórico del ERP/Symphony contra
 /// el conteo físico digitado o dictado por voz.
 model ItemInventario {
-  id           String       @id @default(cuid())
+  id String @id @default(cuid())
+
+  /// Desnormalizado a propósito (se podría derivar vía `inventario`): las
+  /// policies de RLS tienen que poder evaluarse sobre la fila SIN hacer un
+  /// join, o cada consulta a esta tabla arrastraría una subconsulta.
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+
   inventarioId String
   inventario   Inventario   @relation(fields: [inventarioId], references: [id], onDelete: Cascade)
   articuloId   String
@@ -154,7 +235,13 @@ model ItemInventario {
 
   /// Una sola línea de conteo por artículo dentro de cada toma física;
   /// redictar/recontar el mismo artículo actualiza la línea existente.
+  /// NO necesita incluir `organizacionId`: `inventarioId` es un cuid único a
+  /// nivel global, así que el par ya es inequívoco entre organizaciones.
+  /// Mantenerlo así es importante — agregarle una columna no-única al `where`
+  /// del upsert haría que Prisma abandone el `INSERT ... ON CONFLICT` nativo
+  /// del que depende `incrementarConteo` para evitar el lost update.
   @@unique([inventarioId, articuloId])
+  @@index([organizacionId])
   @@index([inventarioId])
   @@index([articuloId])
   @@map("items_inventario")
@@ -163,7 +250,13 @@ model ItemInventario {
 /// Discrepancia detectada en una toma física (stock negativo del ERP,
 /// desviación > 40% frente al histórico, o unidad ambigua por voz).
 model AlertaInventario {
-  id               String          @id @default(cuid())
+  id String @id @default(cuid())
+
+  /// Desnormalizado por el mismo motivo que en `ItemInventario`: las policies
+  /// de RLS deben poder evaluarse sin join.
+  organizacionId String
+  organizacion   Organizacion @relation(fields: [organizacionId], references: [id], onDelete: Cascade)
+
   inventarioId     String
   inventario       Inventario      @relation(fields: [inventarioId], references: [id], onDelete: Cascade)
   itemInventarioId String?
@@ -184,6 +277,7 @@ model AlertaInventario {
   revisadoEn       DateTime?
   createdAt        DateTime        @default(now())
 
+  @@index([organizacionId])
   @@index([inventarioId])
   @@index([tipo])
   // Además de estos índices, hay un ÍNDICE ÚNICO PARCIAL de Postgres sobre

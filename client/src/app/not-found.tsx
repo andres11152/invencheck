@@ -7,16 +7,16 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ClientProviders } from "@/components/client-providers";
-import { ColsubsidioLogo } from "@/components/colsubsidio-logo";
+import { InvenCheckLogo } from "@/components/invencheck-logo";
 
 function NotFoundContent() {
   return (
     <main className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-sm animate-in fade-in-0 zoom-in-95 duration-500 backdrop-blur-2xl">
         <CardHeader className="items-center text-center">
-          {/* Logo K Colsubsidio sobre fondo azul */}
+          {/* Logo InvenCheck sobre fondo azul */}
           <div className="mb-4 flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-primary p-2 shadow-lg">
-            <ColsubsidioLogo variant="color" size="sm" priority />
+            <InvenCheckLogo variant="color" size="sm" priority />
           </div>
           <CardTitle>Página no encontrada</CardTitle>
           <p className="mt-1 text-sm text-muted-foreground">

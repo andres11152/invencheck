@@ -6,6 +6,7 @@ import {
 } from './utils/test-app';
 import { truncateAll } from './utils/db-reset';
 import { agent } from './utils/http';
+import { ORGANIZACION_LEGADO_ID } from '../src/prisma/organizacion-legado';
 
 interface WebhookResponseBody {
   success: boolean;
@@ -62,7 +63,12 @@ describe('Webhooks de integración ERP (e2e)', () => {
       expect(body.success).toBe(true);
 
       const articulo = await ctx.prisma.articulo.findUnique({
-        where: { nombre: 'ARTICULO SINCRONIZADO ERP' },
+        where: {
+          organizacionId_nombre: {
+            organizacionId: ORGANIZACION_LEGADO_ID,
+            nombre: 'ARTICULO SINCRONIZADO ERP',
+          },
+        },
       });
       expect(articulo).not.toBeNull();
       expect(articulo!.categoria).toBe('Abarrotes');
@@ -96,7 +102,12 @@ describe('Webhooks de integración ERP (e2e)', () => {
       expect(body.success).toBe(true);
 
       const almacen = await ctx.prisma.almacen.findUnique({
-        where: { codigo: 'BOD-ERP-TEST' },
+        where: {
+          organizacionId_codigo: {
+            organizacionId: ORGANIZACION_LEGADO_ID,
+            codigo: 'BOD-ERP-TEST',
+          },
+        },
       });
       expect(almacen).not.toBeNull();
     });

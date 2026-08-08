@@ -27,12 +27,14 @@ describe('RolesGuard', () => {
     email: 'op@demo.com',
     nombre: 'Op',
     rol: RolUsuario.OPERARIO,
+    organizacionId: 'org-test-1',
   };
   const auditor: AuthenticatedUser = {
     id: '2',
     email: 'aud@demo.com',
     nombre: 'Aud',
     rol: RolUsuario.AUDITOR,
+    organizacionId: 'org-test-1',
   };
 
   it('permite el acceso si la ruta no declara @Roles()', () => {

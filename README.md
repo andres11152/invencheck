@@ -5,9 +5,9 @@
 [![client tests](https://img.shields.io/badge/client%20tests-52%20tests%20%2F%2012%20specs-blue)](client/src)
 [![coverage threshold](https://img.shields.io/badge/coverage%20threshold-enforced%20in%20CI-success)](#tests)
 
-PWA de toma física de inventario por voz para Colsubsidio Hotelería. Reemplaza el conteo manual en papel: el operario dicta lo que cuenta ("quince kilos de papa criolla"), el sistema lo matchea contra el catálogo real en tiempo real, y las anomalías (cantidades implausibles, unidades ambiguas) bloquean la consolidación hasta que alguien las confirma o corrige.
+PWA de toma física de inventario por voz para bodegas y almacenes hoteleros. Reemplaza el conteo manual en papel: el operario dicta lo que cuenta ("quince kilos de papa criolla"), el sistema lo matchea contra el catálogo real en tiempo real, y las anomalías (cantidades implausibles, unidades ambiguas) bloquean la consolidación hasta que alguien las confirma o corrige.
 
-Desarrollado para el reto Colsubsidio 30X ("Reto Hotelería"). El alcance está delimitado por el brief del reto: capacidad de captura por voz, matching de catálogo, detección de anomalías y reportes de variación física vs. histórico. Funcionalidad de recetas/pedidos/producción fue evaluada, implementada y luego removida deliberadamente al confirmarse con los organizadores que quedaba fuera del alcance evaluado — ver `git log` para el historial de esa decisión.
+Desarrollado como prototipo para el control y toma física de inventarios de hotelería. El alcance incluye capacidad de captura por voz, matching de catálogo, detección de anomalías y reportes de variación física vs. histórico. Funcionalidad de recetas/pedidos/producción fue evaluada y removida deliberadamente para simplificar el alcance — ver `git log` para el historial de esa decisión.
 
 ## Estado del proyecto
 
@@ -256,4 +256,4 @@ En orden aproximado de impacto:
 
 ## Licencia
 
-Proyecto desarrollado para el reto Colsubsidio 30X. Sin licencia de código abierto publicada — uso restringido al alcance del reto salvo indicación contraria de Colsubsidio.
+Proyecto desarrollado para la gestión de inventarios. Sin licencia de código abierto publicada — uso restringido salvo indicación contraria.

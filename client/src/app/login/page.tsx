@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, Eye, EyeOff, Loader2, LogIn, Mic, RefreshCw } from "lucide-react";
-import { ColsubsidioLogo } from "@/components/colsubsidio-logo";
+import { InvenCheckLogo } from "@/components/invencheck-logo";
 import { toast } from "sonner";
 
 import { useAuth } from "@/components/auth-provider";
@@ -56,11 +56,11 @@ function LoginPageContent() {
   return (
     <main className="flex min-h-screen items-center justify-center p-4 bg-gradient-to-br from-[#021123] via-[#091f3a] to-[#041225]">
       <Card className="w-full max-w-sm animate-in fade-in-50 zoom-in-[0.98] duration-700 ease-out overflow-hidden bg-card/40 border-border/50 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.8)] backdrop-blur-2xl backdrop-saturate-150 sm:max-w-3xl sm:grid sm:grid-cols-2">
-        {/* ── Panel de marca Colsubsidio — animado de entrada ── */}
+        {/* ── Panel de marca InvenCheck — animado de entrada ── */}
         <div className="bg-brand-gradient hidden flex-col justify-between p-10 sm:flex animate-in slide-in-from-left-8 fade-in duration-1000 ease-out">
-          {/* Logo horizontal Colsubsidio blanco — LogoV2 con efecto de brillo reflectivo */}
+          {/* Logo horizontal InvenCheck blanco — con efecto de brillo reflectivo */}
           <div className="hover:scale-[1.02] hover:drop-shadow-[0_0_15px_rgba(255,255,255,0.5)] transition-all duration-500 origin-left cursor-pointer">
-            <ColsubsidioLogo variant="blanco" size="md" priority />
+            <InvenCheckLogo variant="blanco" size="md" priority />
           </div>
 
           {/* Tagline central */}
@@ -71,7 +71,7 @@ function LoginPageContent() {
               <span className="text-secondary drop-shadow-[0_2px_10px_rgba(255,208,0,0.2)]">sin errores</span>
             </h2>
             <p className="text-sm text-white/70 animate-in fade-in slide-in-from-bottom-4 delay-300 duration-1000">
-              Captura por voz para bodegas Colsubsidio.
+              Captura por voz para bodegas y almacenes.
               Procesado con IA en segundos.
             </p>
           </div>
@@ -109,9 +109,9 @@ function LoginPageContent() {
         {/* Panel de Login */}
         <div className="p-6 sm:p-10 flex flex-col justify-center animate-in slide-in-from-right-8 fade-in duration-1000 ease-out">
           <CardHeader className="items-center p-0 text-center">
-            {/* Logo Colsubsidio original #1 (color amarillo y azul) — visible en móvil y con efecto respiración pulsante */}
+            {/* Logo InvenCheck — visible en móvil y con efecto respiración pulsante */}
             <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-white p-3 shadow-lg hover:scale-105 hover:shadow-[#FFD000]/10 hover:shadow-2xl transition-all duration-500 animate-pulse-ring sm:hidden">
-              <ColsubsidioLogo variant="color" size="md" priority />
+              <InvenCheckLogo variant="color" size="md" priority />
             </div>
             <CardTitle className="text-2xl font-bold tracking-tight">
               Inven<span className="text-secondary animate-pulse">Check</span>

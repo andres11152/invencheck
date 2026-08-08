@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { BarChart3, ClipboardList, Loader2, SearchX } from "lucide-react";
-import { ColsubsidioLogo } from "@/components/colsubsidio-logo";
+import { InvenCheckLogo } from "@/components/invencheck-logo";
 import { toast } from "sonner";
 
 import { api, ApiError } from "@/lib/api";
@@ -76,19 +76,19 @@ function AlmacenesPageContent() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-5xl flex-col gap-6 p-4 pb-28 sm:p-8">
-      {/* ── Header de marca Colsubsidio — barra glass ── */}
+      {/* ── Header de marca InvenCheck — barra glass ── */}
       <header className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-card/55 px-4 py-3 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.05),0_10px_30px_-14px_rgba(0,0,0,0.55)] backdrop-blur-xl backdrop-saturate-150">
         <div className="flex items-center gap-4">
-          {/* Logo Colsubsidio oficial — ícono K amarillo sobre fondo azul */}
+          {/* Logo InvenCheck oficial */}
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary p-1.5 shadow-lg">
-            <ColsubsidioLogo variant="color" size="sm" priority />
+            <InvenCheckLogo variant="color" size="sm" priority />
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight sm:text-2xl">
               Inven<span className="text-secondary">Check</span>
             </h1>
             <p className="text-xs font-medium text-muted-foreground">
-              Colsubsidio · Gestión de Inventario
+              Gestión de Inventario
             </p>
           </div>
         </div>
