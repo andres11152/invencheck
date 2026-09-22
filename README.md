@@ -1,160 +1,153 @@
 # InvenCheck
 
-[![CI](https://github.com/andres11152/invencheck/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/andres11152/invencheck/actions/workflows/ci.yml)
-[![server e2e](https://img.shields.io/badge/server%20e2e-43%20tests%20%2F%2015%20specs-blue)](server/test)
-[![client tests](https://img.shields.io/badge/client%20tests-52%20tests%20%2F%2012%20specs-blue)](client/src)
-[![coverage threshold](https://img.shields.io/badge/coverage%20threshold-enforced%20in%20CI-success)](#tests)
+Voice-driven physical inventory count PWA for warehouses and hotel storerooms. Replaces manual paper counting: the operator dictates what they're counting ("fifteen kilos of yellow potato"), the system matches it against the real catalog in real time, and anomalies (implausible quantities, ambiguous units) block consolidation until someone confirms or corrects them.
 
-PWA de toma física de inventario por voz para bodegas y almacenes hoteleros. Reemplaza el conteo manual en papel: el operario dicta lo que cuenta ("quince kilos de papa criolla"), el sistema lo matchea contra el catálogo real en tiempo real, y las anomalías (cantidades implausibles, unidades ambiguas) bloquean la consolidación hasta que alguien las confirma o corrige.
+Built as a prototype for physical inventory control and counting in hospitality. Scope includes voice capture, catalog matching, anomaly detection, and physical-vs-historical variance reports. Recipe/order/production functionality was evaluated and deliberately removed to simplify scope — see the git log for the history of that decision.
 
-Desarrollado como prototipo para el control y toma física de inventarios de hotelería. El alcance incluye capacidad de captura por voz, matching de catálogo, detección de anomalías y reportes de variación física vs. histórico. Funcionalidad de recetas/pedidos/producción fue evaluada y removida deliberadamente para simplificar el alcance — ver `git log` para el historial de esa decisión.
+## Project status
 
-## Estado del proyecto
+This project is in functional-demo-prototype status, not production-deployment status. The table below honestly summarizes which production controls exist and which don't, so that anyone picking it up knows exactly where things stand.
 
-Este proyecto está en estado de **prototipo funcional para demo**, no de despliegue en producción. La tabla siguiente resume honestamente qué controles de producción existen y cuáles no, para que cualquiera que lo retome sepa exactamente dónde está parado.
+| Area | Status |
+| --- | --- |
+| Authentication (JWT, global guard) | Implemented |
+| Role-based authorization (segregation of duties in closing/audit) | Implemented |
+| Rate limiting (login and global) | Implemented |
+| Centralized error handling | Implemented |
+| Health check | Implemented |
+| CI (lint + typecheck + unit tests + e2e + build, server and client, on every push/PR) | Implemented |
+| Unit tests | Partial, with a coverage threshold enforced in CI (build fails if it drops) — server: ~57% statements; client: ~80% statements but the threshold only requires 6 of the 12 files that already have tests (auth-storage, api, voice-sanitize, use-offline-sync, use-speech-recognition, AnomaliaModal) — see the Tests section |
+| Integration/e2e tests | Implemented — 15 specs against a real Postgres (auth, fuzzy matching, matching ambiguity, thousands-separator numbers, counting concurrency, alert deduplication and auto-resolution, concurrent race on the same alert, manual selection of an ambiguous candidate, unit mixing, anomaly blocking, role authorization, variance report, ERP webhooks) |
+| Containerization (server/client Dockerfile) | Doesn't exist — there's only a docker-compose.yml for local Postgres |
+| Dependencies with known vulnerabilities | exceljs (server, prod): no clean fix upstream — see limitation #2. prisma CLI (server, dev-only): the finding is from an older version than the one already installed and from a command (`prisma dev`) this project doesn't use. next/postcss (client): pending, requires a major migration — see limitation #2 |
+| Observability (structured logging, APM, metrics) | Doesn't exist — only Nest's Logger to stdout |
+| Secrets management | Plain environment variables (.env), no vault |
 
-| Área | Estado |
-|---|---|
-| Autenticación (JWT, guard global) | Implementado |
-| Autorización por rol (segregación de funciones en cierre/auditoría) | Implementado |
-| Rate limiting (login y global) | Implementado |
-| Manejo centralizado de errores | Implementado |
-| Health check | Implementado |
-| CI (lint + typecheck + tests unitarios + e2e + build, server y client, en cada push/PR) | Implementado |
-| Tests unitarios | Parcial, con umbral de cobertura exigido en CI (falla el build si baja) — `server`: ~57% statements; `client`: ~80% statements pero el umbral solo exige 6 de los 12 archivos que ya tienen test (`auth-storage`, `api`, `voice-sanitize`, `use-offline-sync`, `use-speech-recognition`, `AnomaliaModal`) — ver sección Tests |
-| Tests de integración/e2e | Implementado — 15 specs contra Postgres real (auth, matching difuso, ambigüedad de matching, números con separador de miles, concurrencia de conteo, deduplicación y auto-resolución de alertas, carrera concurrente sobre la misma alerta, selección manual de un candidato ambiguo, mezcla de unidades, bloqueo por anomalía, autorización por rol, reporte de variación, webhooks ERP) |
-| Contenerización (Dockerfile de `server`/`client`) | No existe — solo hay `docker-compose.yml` para Postgres local |
-| Dependencias con vulnerabilidades conocidas | `exceljs` (server, prod): sin fix limpio upstream — ver limitación #2. `prisma` CLI (server, dev-only): el hallazgo es de una versión más vieja que la ya instalada y de un comando (`prisma dev`) que este proyecto no usa. `next`/`postcss` (client): pendiente, requiere migración mayor — ver limitación #2 |
-| Observabilidad (logging estructurado, APM, métricas) | No existe — solo `Logger` de Nest a stdout |
-| Gestión de secretos | Variables de entorno planas (`.env`), sin vault |
+## Architecture
 
-## Arquitectura
+Monorepo with npm workspaces:
 
-Monorepo con npm workspaces:
-
-```
-server/    NestJS + Prisma + PostgreSQL — API REST bajo /api
-client/    Next.js 14 (App Router) — PWA, todo "use client"
-shared/    Enums TypeScript compartidos entre server y client
-```
+- `server/` NestJS + Prisma + PostgreSQL — REST API under `/api`
+- `client/` Next.js 14 (App Router) — PWA, everything `"use client"`
+- `shared/` TypeScript enums shared between server and client
 
 ### Server
 
-Cada módulo en `server/src/modules/` (`almacenes`, `articulos`, `ai-engine`, `inventarios`, `reportes`, `integration`, `auth`, `health`) sigue la misma capa: **Controller → Service → Repository**. Los repositorios devuelven tipos derivados de Prisma vía `satisfies Prisma.XInclude` + `Prisma.XGetPayload<{...}>` en vez de interfaces declaradas a mano, para que el tipo no pueda desalinearse de la query real.
+Every module in `server/src/modules/` (almacenes, articulos, ai-engine, inventarios, reportes, integration, auth, health) follows the same layering: Controller → Service → Repository. Repositories return types derived from Prisma via `satisfies Prisma.XInclude + Prisma.XGetPayload<{...}>` instead of hand-declared interfaces, so the type can never drift from the actual query.
 
-SQL crudo (`$queryRaw`) se usa únicamente donde el query builder de Prisma no alcanza: matching difuso por trigramas (`pg_trgm` + `unaccent`) en `articulo.repository.ts`, y el reporte agregado de variación en `reporte.repository.ts`. Siempre a través de `Prisma.sql` con parámetros tipados, nunca concatenación de strings.
+Raw SQL (`$queryRaw`) is used only where Prisma's query builder isn't enough: trigram fuzzy matching (`pg_trgm` + `unaccent`) in `articulo.repository.ts`, and the aggregated variance report in `reporte.repository.ts`. Always through `Prisma.sql` with typed parameters, never string concatenation.
 
-**Autenticación y autorización.** `JwtAuthGuard` está registrado globalmente (`APP_GUARD`); toda ruta exige un JWT válido salvo que esté marcada `@Public()`. `RolesGuard`, también global, aplica `@Roles(...)` donde se declare — hoy restringe la consolidación de inventario (`PATCH /inventarios/:id/estado`) y la creación de auditorías ciegas (`POST /inventarios/:id/auditoria-ciega`) a los roles `AUDITOR` y `ADMIN`: quien contó no se autoaprueba (segregación de funciones clásica en procesos de inventario). `usuarioId`/`auditorId` se derivan siempre del JWT vía `@CurrentUser()`, nunca se aceptan desde el body de la petición.
+**Authentication and authorization.** `JwtAuthGuard` is registered globally (`APP_GUARD`); every route requires a valid JWT unless marked `@Public()`. `RolesGuard`, also global, applies `@Roles(...)` wherever declared — today it restricts inventory consolidation (`PATCH /inventarios/:id/estado`) and creating blind audits (`POST /inventarios/:id/auditoria-ciega`) to the `AUDITOR` and `ADMIN` roles: whoever counted can't self-approve (classic segregation of duties in inventory processes). `usuarioId`/`auditorId` are always derived from the JWT via `@CurrentUser()`, never accepted from the request body.
 
-Los webhooks de integración ERP (`POST /integration/webhook/sync-articulo`, `sync-almacen`) usan un `ApiKeyGuard` separado (header `X-Api-Key`) en vez de JWT, porque los llama un sistema externo, no un usuario logueado. `POST /integration/mock-erp/receive-inventario` es público: simula el endpoint del ERP externo para el flujo de demo, no forma parte del perímetro de confianza de esta aplicación.
+ERP integration webhooks (`POST /integration/webhook/sync-articulo`, `sync-almacen`) use a separate `ApiKeyGuard` (`X-Api-Key` header) instead of JWT, because they're called by an external system, not a logged-in user. `POST /integration/mock-erp/receive-inventario` is public: it simulates the external ERP's endpoint for the demo flow and isn't part of this application's trust perimeter.
 
-**Detección de anomalías.** `AnomaliasService.evaluarConteo` evalúa, en orden, tres reglas por línea contada:
+**Anomaly detection.** `AnomaliasService.evaluarConteo` evaluates, in order, three rules per counted line:
 
-1. Ambigüedad de unidad: si la unidad dictada difiere de la unidad de catálogo del artículo y no hay factor de conversión conocido, dispara `UNIDAD_AMBIGUA` y no convierte.
-2. Stock negativo heredado: `teorico < 0` dispara `STOCK_NEGATIVO`.
-3. Desviación histórica: variación contra el promedio histórico **de esa bodega específica** (con fallback al promedio global del artículo si la bodega no tiene historial propio) fuera de `[-80%, +200%]` dispara `ANOMALIA_CANTIDAD`.
+1. Unit ambiguity: if the dictated unit differs from the item's catalog unit and there's no known conversion factor, it fires `UNIDAD_AMBIGUA` and doesn't convert.
+2. Inherited negative stock: `teorico < 0` fires `STOCK_NEGATIVO`.
+3. Historical deviation: variance against that specific warehouse's historical average (falling back to the item's global average if the warehouse has no history of its own) outside `[-80%, +200%]` fires `ANOMALIA_CANTIDAD`.
 
-Cualquier alerta sin resolver bloquea la transición a `CONCILIADO`/`ENVIADO_ERP`, verificado del lado del servidor — el modal de confirmación en el cliente es solo la capa de UX, no el control real.
+Any unresolved alert blocks the transition to `CONCILIADO`/`ENVIADO_ERP`, verified server-side — the confirmation modal on the client is only a UX layer, not the real control.
 
-**Concurrencia.** La acumulación de conteos usa el operador atómico `{ increment: delta }` de Prisma en vez de leer-sumar-escribir en código de aplicación, para que dos dictados casi simultáneos del mismo artículo no se pisen entre sí (lost update). La conversión de unidad ocurre antes del incremento, nunca después, para no mezclar magnitudes distintas en la suma. Todo el resto de la escritura de una línea contada (incremento, evaluación de anomalías, creación/resolución de alertas) corre dentro de una única transacción Prisma (`InventarioRepository.ejecutarEnTransaccion`) — antes eran varias escrituras secuenciales sueltas, con ventana real para quedar a medio aplicar si una fallaba a mitad de camino. La deduplicación de alertas activas (`crearAlertas`) ya no depende de un check-then-act en código de aplicación (leer activas → filtrar → insertar, vulnerable a una carrera real bajo dictados genuinamente simultáneos): un índice único parcial de Postgres sobre `(itemInventarioId, tipo)` — solo activo mientras la alerta sigue sin resolver — lo garantiza a nivel de base de datos, combinado con `skipDuplicates: true` en el `createMany`.
+**Concurrency.** Count accumulation uses Prisma's atomic `{ increment: delta }` operator instead of a read-add-write in application code, so that two near-simultaneous dictations of the same item don't overwrite each other (lost update). Unit conversion happens before the increment, never after, to avoid mixing different magnitudes in the sum. Every other write of a counted line (increment, anomaly evaluation, alert creation/resolution) runs inside a single Prisma transaction (`InventarioRepository.ejecutarEnTransaccion`) — previously these were several loose sequential writes, with a real window to end up half-applied if one failed partway through. Deduplication of active alerts (`crearAlertas`) no longer depends on a check-then-act in application code (read active → filter → insert, vulnerable to a real race under genuinely simultaneous dictations): a partial unique Postgres index on `(itemInventarioId, tipo)` — active only while the alert remains unresolved — guarantees it at the database level, combined with `skipDuplicates: true` in the `createMany`.
 
-**Selección manual de candidato ambiguo (`POST /inventarios/:id/procesar-articulo`).** Cuando dos artículos del catálogo son tan parecidos que ninguna frase dictada por voz distingue entre ellos sin reproducir la misma ambigüedad (el caso real: "PAPA CRIOLLA" es prefijo exacto de "PAPA CRIOLLA PRECOCIDA"), el cliente ofrece elegir directamente por `articuloId` en vez de forzar un loop de re-dictado imposible de resolver. El texto de la sugerencia de desambiguación (`describirMotivoNoMatch`/`sugerenciaDesambiguacion`) vive en `articulo-text.util.ts`, junto al resto de utilidades de texto de matching por voz, no en `InventarioService` — es lógica de interpretación de nombres de artículo, no de orquestación de inventario.
+**Manual selection of an ambiguous candidate** (`POST /inventarios/:id/procesar-articulo`). When two catalog items are similar enough that no voice-dictated phrase can distinguish between them without reproducing the same ambiguity (the real case: "PAPA CRIOLLA" is an exact prefix of "PAPA CRIOLLA PRECOCIDA"), the client offers picking directly by `articuloId` instead of forcing an impossible re-dictation loop. The disambiguation-suggestion text (`describirMotivoNoMatch`/`sugerenciaDesambiguacion`) lives in `articulo-text.util.ts`, alongside the rest of the voice-matching text utilities, not in `InventarioService` — it's item-name interpretation logic, not inventory orchestration.
 
-**Cascada de dictado por voz.** `AiEngineService.procesarDictadoVoz`: Gemini (si `GEMINI_API_KEY` está configurada) con reintentos y backoff exponencial ante errores transitorios (429/5xx) → parser local en español (`voice-parser.util.ts`, regex + tabla de números, sin llamadas externas). El parser local no es un stub: es el fallback real con el que corre la demo por defecto, con su propia suite de tests.
+**Voice dictation cascade.** `AiEngineService.procesarDictadoVoz`: Gemini (if `GEMINI_API_KEY` is configured) with retries and exponential backoff on transient errors (429/5xx) → local Spanish-language parser (`voice-parser.util.ts`, regex + a number table, no external calls). The local parser isn't a stub: it's the real fallback the demo runs on by default, with its own test suite.
 
 ### Client
 
-Next.js 14 App Router, todos los componentes `"use client"` — sin server components ni server actions, todo habla con la API a través de un wrapper `request<T>` tipado en `client/src/lib/api.ts`. `auth-provider.tsx` mantiene la sesión JWT en `localStorage` y redirige a `/login` ante sesión ausente o expirada.
+Next.js 14 App Router, every component `"use client"` — no server components or server actions, everything talks to the API through a typed `request<T>` wrapper in `client/src/lib/api.ts`. `auth-provider.tsx` keeps the JWT session in `localStorage` and redirects to `/login` on a missing or expired session.
 
-Las rutas de App Router (`page.tsx`) solo declaran los exports reservados por Next (`default`, `dynamic`, etc.) — la pantalla de conteo (`app/inventario/[id]/`) separa por eso el componente real (`inventario-page-content.tsx`, con todo el estado y los handlers) de un `page.tsx` que solo lo envuelve en `ClientProviders`, para poder importarlo y testearlo directamente con Testing Library.
+App Router routes (`page.tsx`) only declare Next's reserved exports (`default`, `dynamic`, etc.) — for that reason the counting screen (`app/inventario/[id]/`) separates the actual component (`inventario-page-content.tsx`, with all the state and handlers) from a `page.tsx` that only wraps it in `ClientProviders`, so it can be imported and tested directly with Testing Library.
 
-Soporte offline: los dictados hechos sin conexión se encolan en IndexedDB (`use-offline-sync.ts`) y se reintentan al recuperar señal.
+Offline support: dictations made without a connection are queued in IndexedDB (`use-offline-sync.ts`) and retried once signal is recovered.
 
-`shared/src/enums/` (`EstadoInventario`, `TipoAlerta`, `UnidadMedida`) es el único punto de sincronización de tipos entre server y client. El client **no** importa el resto de tipos del server: `client/src/lib/types.ts` declara sus propias interfaces reflejando las respuestas del server a mano. Cualquier cambio de forma de respuesta en el server debe reflejarse ahí manualmente — el compilador no detecta ese drift entre paquetes.
+`shared/src/enums/` (`EstadoInventario`, `TipoAlerta`, `UnidadMedida`) is the only type-sync point between server and client. The client doesn't import the rest of the server's types: `client/src/lib/types.ts` hand-declares its own interfaces mirroring the server's responses. Any change to a response shape on the server has to be reflected there manually — the compiler doesn't catch that drift between packages.
 
-## Requisitos
+## Requirements
 
-- Node.js 24.x (probado con `v24.18.0`); no hay `.nvmrc` en el repo todavía
-- npm 10+ (probado con `11.16.0`)
-- Docker Desktop (para Postgres local vía `docker compose`)
+- Node.js 24.x (tested with v24.18.0); there's no `.nvmrc` in the repo yet
+- npm 10+ (tested with 11.16.0)
+- Docker Desktop (for local Postgres via docker compose)
 
-## Puesta en marcha
+## Getting started
 
-```bash
+```
 git clone https://github.com/andres11152/invencheck.git
 cd invencheck
-npm install                              # instala las 3 workspaces de una vez
+npm install # installs all 3 workspaces at once
 
-cp server/.env.example server/.env       # completar JWT_SECRET y ERP_WEBHOOK_API_KEY
-cp client/.env.example client/.env       # NEXT_PUBLIC_API_URL por defecto ya sirve para local
+cp server/.env.example server/.env # fill in JWT_SECRET and ERP_WEBHOOK_API_KEY
+cp client/.env.example client/.env # NEXT_PUBLIC_API_URL's default already works for local
 
 cd server
-npm run db:up                            # docker compose up -d — Postgres debe estar arriba antes de lo siguiente
-npm run prisma:migrate                   # aplica migraciones
-npm run prisma:seed                      # WIPEA articulos/almacenes/inventarios, crea 5 artículos + 3 usuarios demo
-npm run prisma:import-excel              # reimporta el catálogo real (936 artículos, 48 bodegas) desde data/BODEGAS Y STOCK.xlsx
+npm run db:up # docker compose up -d — Postgres must be up before the next step
+npm run prisma:migrate # applies migrations
+npm run prisma:seed # WIPES articulos/almacenes/inventarios, creates 5 items + 3 demo users
+npm run prisma:import-excel # re-imports the real catalog (936 items, 48 warehouses) from data/BODEGAS Y STOCK.xlsx
 ```
 
-`prisma:seed` y `prisma:import-excel` deben correr en ese orden: el seed siempre resetea `articulos`/`almacenes` a un puñado de fixtures de prueba, así que el catálogo real hay que reimportarlo después de cada seed.
+`prisma:seed` and `prisma:import-excel` must run in that order: the seed always resets `articulos`/`almacenes` to a handful of test fixtures, so the real catalog has to be re-imported after every seed.
 
-### Variables de entorno requeridas (server)
+### Required environment variables (server)
 
-| Variable | Descripción |
-|---|---|
-| `DATABASE_URL` | Cadena de conexión a Postgres |
-| `JWT_SECRET` | Requerida — el proceso falla al arrancar si falta. Generar con `openssl rand -hex 32`, nunca reutilizar el valor de ejemplo |
-| `ERP_WEBHOOK_API_KEY` | Requerida — el proceso falla al arrancar si falta. Autentica los webhooks del ERP externo |
-| `GEMINI_API_KEY` | Opcional. Sin ella, el dictado de voz usa el parser local en español |
-| `JWT_EXPIRES_IN_SECONDS` | Opcional, default 43200 (12h) |
-| `CORS_ORIGIN` | Opcional, default `http://localhost:3001` |
+| Variable | Description |
+| --- | --- |
+| `DATABASE_URL` | Postgres connection string |
+| `JWT_SECRET` | Required — the process fails to start without it. Generate with `openssl rand -hex 32`, never reuse the example value |
+| `ERP_WEBHOOK_API_KEY` | Required — the process fails to start without it. Authenticates the external ERP's webhooks |
+| `GEMINI_API_KEY` | Optional. Without it, voice dictation uses the local Spanish-language parser |
+| `JWT_EXPIRES_IN_SECONDS` | Optional, default 43200 (12h) |
+| `CORS_ORIGIN` | Optional, default http://localhost:3001 |
 
-## Desarrollo
+## Development
 
-Dos servidores, puertos fijos, correr ambos:
+Two servers, fixed ports, run both:
 
-```bash
-npm run dev:server    # desde la raíz, o `npm run start:dev` en server/ — NestJS en :3000, prefijo /api
-npm run dev:client    # desde la raíz, o `npm run dev` en client/ — Next.js en :3001
+```
+npm run dev:server # from the root, or `npm run start:dev` in server/ — NestJS on :3000, prefix /api
+npm run dev:client # from the root, or `npm run dev` in client/ — Next.js on :3001
 ```
 
-Docker Desktop debe estar corriendo (`docker compose up -d` en `server/`) antes de levantar el server.
+Docker Desktop must be running (`docker compose up -d` in `server/`) before starting the server.
 
-**Advertencia conocida:** correr `next build` (client) o `nest build` (server) mientras el dev server correspondiente sigue vivo contra el mismo `.next`/`dist` corrompe ese output y el dev server empieza a responder 500. Después de un build de producción: `rm -rf .next` (o `dist/`) y reiniciar el dev server.
+**Known gotcha:** running `next build` (client) or `nest build` (server) while the corresponding dev server is still alive against the same `.next`/`dist` output corrupts that output and the dev server starts responding 500. After a production build: `rm -rf .next` (or `dist/`) and restart the dev server.
 
-### Usuarios demo (creados por el seed)
+### Demo users (created by the seed)
 
-| Email | Password | Rol |
-|---|---|---|
-| `operario@invencheck.demo` | `operario123` | OPERARIO |
-| `auditor@invencheck.demo` | `auditor123` | AUDITOR |
-| `admin@invencheck.demo` | `admin123` | ADMIN |
+| Email | Password | Role |
+| --- | --- | --- |
+| operario@invencheck.demo | operario123 | OPERARIO |
+| auditor@invencheck.demo | auditor123 | AUDITOR |
+| admin@invencheck.demo | admin123 | ADMIN |
 
-OPERARIO puede contar y dictar, pero no puede consolidar un inventario ni enviarlo al ERP, ni iniciar una auditoría ciega — esas acciones requieren AUDITOR o ADMIN.
+`OPERARIO` can count and dictate, but can't consolidate an inventory, send it to the ERP, or start a blind audit — those actions require `AUDITOR` or `ADMIN`.
 
-## Comandos
+## Commands
 
-Ejecutar desde el directorio del paquete correspondiente salvo que se indique lo contrario.
+Run from the corresponding package directory unless noted otherwise.
 
 **Server:**
 
-```bash
-npm run lint                # eslint --fix
-npx tsc --noEmit             # typecheck (sin script npm dedicado, se invoca directo)
-npm test                     # jest, unitarios
-npx jest <nombre>.spec.ts    # un solo archivo de test
-npm run test:cov             # con reporte de cobertura + umbral (el que corre CI)
-npm run test:e2e             # 15 specs e2e contra Postgres real — ver sección Tests para el setup de `.env.test`
-npm run build                # nest build
+```
+npm run lint              # eslint --fix
+npx tsc --noEmit          # typecheck (no dedicated npm script, invoked directly)
+npm test                  # jest, unit tests
+npx jest <name>.spec.ts   # a single test file
+npm run test:cov          # with coverage report + threshold (what CI runs)
+npm run test:e2e          # 15 e2e specs against a real Postgres — see Tests section for .env.test setup
+npm run build              # nest build
 ```
 
 **Client:**
 
-```bash
+```
 npm run lint       # next lint
-npx tsc --noEmit    # typecheck
-npm run test        # vitest run — unitarios/componente
-npm run test:watch  # vitest en modo watch
-npm run test:cov    # con reporte de cobertura + umbral (el que corre CI)
+npx tsc --noEmit   # typecheck
+npm run test       # vitest run — unit/component
+npm run test:watch # vitest in watch mode
+npm run test:cov   # with coverage report + threshold (what CI runs)
 npm run build       # next build
 ```
 
@@ -162,98 +155,103 @@ npm run build       # next build
 
 ## CI
 
-`.github/workflows/ci.yml` corre en cada push a `master` y en cada pull request: instala las 3 workspaces, build de `shared`, luego lint + typecheck + tests unitarios (con umbral de cobertura, `test:cov`) + build de `server`, luego los tests e2e de `server` contra un contenedor de Postgres levantado como `services` del job, y finalmente lint + typecheck + tests (también con umbral, `test:cov`) + build de `client`. Si la cobertura de cualquiera de los dos paquetes cae por debajo del umbral fijado, el build falla — ver detalle de los umbrales en la sección Tests.
+`.github/workflows/ci.yml` runs on every push to `master` and on every pull request: installs all 3 workspaces, builds `shared`, then lint + typecheck + unit tests (with a coverage threshold, `test:cov`) + build for the server, then the server's e2e tests against a Postgres container spun up as a job service, and finally lint + typecheck + tests (also with a threshold, `test:cov`) + build for the client. If either package's coverage falls below its threshold, the build fails — see threshold detail in the Tests section.
 
 ## Tests
 
-### Server — unitarios
+### Server — unit tests
 
-Cobertura actual (`npm run test:cov`): ~57% de statements (~56% líneas, ~54% branches, ~41% funciones), excluyendo del cálculo el cliente Prisma generado, los `*.module.ts` (wiring de Nest sin lógica) y `main.ts`. Módulos con cobertura real: detección de anomalías, parser de voz local, matching difuso de artículos y su detección de ambigüedad (a nivel de servicio, mockeando el repositorio), guards de auth/roles/API-key, `JwtStrategy`, `HealthController`, `AlmacenService`, `ReporteService` (incluyendo el escape de CSV), `InventarioService.cambiarEstado`, la transaccionalidad de `procesarTomaPorVoz` (cada escritura de una línea contada pasa el mismo `Prisma.TransactionClient`, verificado con un marcador sentinel mockeado), el motivo de `itemsNoMatcheados` por ambigüedad (`describirMotivoNoMatch` en `articulo-text.util.ts`, probado como función pura, no solo indirectamente a través del servicio), `AiEngineService` (reintentos/backoff de Gemini, incluyendo el manejo de 429 con y sin `Retry-After`), filtro global de excepciones, y los controllers principales de inventario/auth verificando específicamente que `usuarioId` se derive del JWT y nunca del body.
+Current coverage (`npm run test:cov`): ~57% statements (~56% lines, ~54% branches, ~41% functions), excluding the generated Prisma client, `*.module.ts` files (Nest wiring with no logic) and `main.ts` from the calculation. Modules with real coverage: anomaly detection, the local voice parser, fuzzy item matching and its ambiguity detection (at the service level, mocking the repository), auth/roles/API-key guards, `JwtStrategy`, `HealthController`, `AlmacenService`, `ReporteService` (including CSV escaping), `InventarioService.cambiarEstado`, the transactionality of `procesarTomaPorVoz` (every write of a counted line goes through the same `Prisma.TransactionClient`, verified with a mocked sentinel marker), the reason behind `itemsNoMatcheados` due to ambiguity (`describirMotivoNoMatch` in `articulo-text.util.ts`, tested as a pure function, not just indirectly through the service), `AiEngineService` (Gemini retries/backoff, including 429 handling with and without `Retry-After`), the global exception filter, and the main inventory/auth controllers specifically verifying that `usuarioId` is derived from the JWT and never from the body.
 
-**Umbral fijado en CI** (`jest.coverageThreshold` en `server/package.json`, aplicado con `npm run test:cov`): 43% statements / 41% branches / 25% funciones / 42% líneas — un poco por debajo de lo ya logrado, a propósito: deja margen para fluctuaciones normales, pero una regresión real (borrar tests, agregar código sin probar) rompe el build. Deliberadamente no es 100%: perseguir cobertura total en getters/DTOs/wiring de Nest no protege nada real, solo infla el número: mejor un umbral más bajo pero exigido de verdad, sobre la lógica que sí importa.
+Threshold set in CI (`jest.coverageThreshold` in `server/package.json`, applied with `npm run test:cov`): 43% statements / 41% branches / 25% functions / 42% lines — deliberately a bit below what's already achieved: it leaves room for normal fluctuation, but a real regression (deleting tests, adding untested code) breaks the build. Deliberately not 100%: chasing full coverage on getters/DTOs/Nest wiring doesn't protect anything real, it just inflates the number — a lower but genuinely enforced threshold, over the logic that actually matters, is better.
 
 ### Server — e2e (`server/test/*.e2e-spec.ts`)
 
-15 specs, corren contra Postgres real (no mocks) vía `Test.createTestingModule` + `supertest`, cubriendo lo que los unitarios no pueden probar de verdad:
+15 specs, run against a real Postgres (no mocks) via `Test.createTestingModule` + supertest, covering what unit tests can't really test:
 
-- `auth.e2e-spec.ts` — login real, smoke test del harness.
-- `articulo-matching.e2e-spec.ts` — `findBestMatches` (trigramas `pg_trgm` + `f_unaccent`, imposible de mockear con sentido) y la detección de ambigüedad de `ArticuloService` entre variantes de color.
-- `procesar-voz-ambiguedad.e2e-spec.ts` — un dictado ambiguo (dos artículos casi empatados) no registra ningún conteo silencioso: cae en `itemsNoMatcheados` con el motivo listando los candidatos.
-- `procesar-voz-miles.e2e-spec.ts` — "15.000kg de papa criolla" (con y sin espacio) registra 15.000 kg de verdad, no 15 — regresión de un bug real de la convención colombiana de separador de miles.
-- `procesar-articulo.e2e-spec.ts` — selección manual directa de un candidato ambiguo por `articuloId`, rompiendo el loop de re-dictado cuando un candidato es prefijo exacto de otro ("PAPA CRIOLLA" / "PAPA CRIOLLA PRECOCIDA"); además 404 sobre un `articuloId` inexistente y 400 sobre cantidad no positiva.
-- `unidad-ambigua-mezcla.e2e-spec.ts` — una unidad ambigua sembrada en una escala (UNIDAD) seguida de dictados válidos en otra (KILOGRAMO) no mezcla las magnitudes en el total acumulado.
-- `alertas-deduplicacion.e2e-spec.ts` — dictar el mismo problema dos veces no duplica la alerta; una vez resuelta y revisada por auditor, si el problema reaparece sí genera una alerta nueva.
-- `alertas-superadas.e2e-spec.ts` — una alerta creada cuando el conteo acumulado todavía era anómalo se auto-resuelve al re-evaluarse y dejar de serlo; si sigue vigente, permanece activa.
-- `alertas-carrera-concurrente.e2e-spec.ts` — 10 dictados HTTP genuinamente concurrentes (`Promise.all`, no secuenciales) del mismo ítem ambiguo generan una sola alerta activa, cerrando a nivel de base de datos una condición de carrera que un check-then-act en código de aplicación no podía garantizar.
-- `inventario-concurrency.e2e-spec.ts` — 20 dictados HTTP concurrentes del mismo artículo, verifica que el `increment` atómico no pierde ninguno (lost update).
-- `anomalia-blocking.e2e-spec.ts` — el flujo de negocio central: anomalía sin resolver bloquea `CONCILIADO`, resolverla lo desbloquea.
-- `roles-authorization.e2e-spec.ts` — OPERARIO recibe 403 en cierre/auditoría; AUDITOR/ADMIN pueden.
-- `reporte-variacion.e2e-spec.ts` — agregación SQL cruda de variación contra datos sembrados con valores conocidos.
-- `integration-webhook.e2e-spec.ts` — `ApiKeyGuard` de los webhooks ERP, con y sin key válida.
-- `procesar-sku.e2e-spec.ts` — resolución exacta por SKU (escáner de código de barras).
+- `auth.e2e-spec.ts` — real login, harness smoke test.
+- `articulo-matching.e2e-spec.ts` — `findBestMatches` (`pg_trgm` trigrams + `f_unaccent`, impossible to meaningfully mock) and `ArticuloService`'s ambiguity detection between color variants.
+- `procesar-voz-ambiguedad.e2e-spec.ts` — an ambiguous dictation (two items nearly tied) doesn't silently register any count: it falls into `itemsNoMatcheados` with a reason listing the candidates.
+- `procesar-voz-miles.e2e-spec.ts` — "15.000kg de papa criolla" (with and without a space) really registers 15,000 kg, not 15 — regression test for a real bug in the Colombian thousands-separator convention.
+- `procesar-articulo.e2e-spec.ts` — direct manual selection of an ambiguous candidate by `articuloId`, breaking the re-dictation loop when one candidate is an exact prefix of another ("PAPA CRIOLLA" / "PAPA CRIOLLA PRECOCIDA"); also a 404 on a nonexistent `articuloId` and a 400 on a non-positive quantity.
+- `unidad-ambigua-mezcla.e2e-spec.ts` — an ambiguous unit seeded on one scale (`UNIDAD`) followed by valid dictations on another (`KILOGRAMO`) doesn't mix magnitudes in the accumulated total.
+- `alertas-deduplicacion.e2e-spec.ts` — dictating the same problem twice doesn't duplicate the alert; once resolved and reviewed by an auditor, if the problem reappears it does generate a new alert.
+- `alertas-superadas.e2e-spec.ts` — an alert created while the accumulated count was still anomalous auto-resolves on re-evaluation once it stops being so; if it's still anomalous, it stays active.
+- `alertas-carrera-concurrente.e2e-spec.ts` — 10 genuinely concurrent HTTP dictations (`Promise.all`, not sequential) of the same ambiguous item generate a single active alert, closing at the database level a race condition that a check-then-act in application code couldn't guarantee.
+- `inventario-concurrency.e2e-spec.ts` — 20 concurrent HTTP dictations of the same item, verifies the atomic increment doesn't lose any of them (lost update).
+- `anomalia-blocking.e2e-spec.ts` — the core business flow: an unresolved anomaly blocks `CONCILIADO`, resolving it unblocks it.
+- `roles-authorization.e2e-spec.ts` — `OPERARIO` gets a 403 on closing/audit; `AUDITOR`/`ADMIN` can proceed.
+- `reporte-variacion.e2e-spec.ts` — raw SQL variance aggregation against seeded data with known values.
+- `integration-webhook.e2e-spec.ts` — the ERP webhooks' `ApiKeyGuard`, with and without a valid key.
+- `procesar-sku.e2e-spec.ts` — exact resolution by SKU (barcode scanner).
 
-**Setup local:** requiere una base `invencheck_test` en el mismo Postgres de `docker compose` (`CREATE DATABASE invencheck_test;`) y un `server/.env.test` (gitignored) con `DATABASE_URL` apuntando a esa base más `JWT_SECRET`/`ERP_WEBHOOK_API_KEY` fijos de prueba — `GEMINI_API_KEY` se deja vacío a propósito para forzar el parser de voz local. `npm run test:e2e` aplica las migraciones automáticamente (`pretest:e2e`) antes de correr. En CI no hace falta `.env.test`: las mismas variables se inyectan como env del job contra el Postgres de `services`.
+Local setup: requires an `invencheck_test` database in the same docker-compose Postgres (`CREATE DATABASE invencheck_test;`) and a `server/.env.test` (gitignored) with `DATABASE_URL` pointing to that database plus fixed test `JWT_SECRET`/`ERP_WEBHOOK_API_KEY` — `GEMINI_API_KEY` is deliberately left empty to force the local voice parser. `npm run test:e2e` applies migrations automatically (`pretest:e2e`) before running. In CI, `.env.test` isn't needed: the same variables are injected as job env against the services' Postgres.
 
-Sin cubrir todavía: la llamada saliente real de `IntegrationErpService.enviarInventarioAERP` al ERP (transición a `ENVIADO_ERP`), y el flujo completo de auditoría ciega más allá de la autorización por rol (`compararAuditoria`).
+Not covered yet: `IntegrationErpService.enviarInventarioAERP`'s real outbound call to the ERP (the `ENVIADO_ERP` transition), and the full blind-audit flow beyond role authorization (`compararAuditoria`).
 
 ### Client
 
-Vitest + Testing Library, 52 tests en 12 archivos:
+Vitest + Testing Library, 52 tests across 12 files:
 
-- `lib/auth-storage.test.ts` — sesión en `localStorage`, incluyendo JSON corrupto.
-- `lib/api.test.ts` — el wrapper `request<T>`: header `Authorization`, `ApiError` en fallo de red (status 0) vs. respuesta no-2xx, el guard que evita redirigir a `/login` cuando el 401 viene del propio login, y la construcción de query string de `getReporteVariacion`.
-- `lib/voice-sanitize.test.ts` — `limpiarRepeticiones`, el helper que colapsa frases repetidas que el motor de reconocimiento de voz de Android reenvía duplicadas.
-- `hooks/use-offline-sync.test.ts` — reintento automático de pendientes con `intentos === 0`, no-reintento de los que ya fallaron salvo `incluirFallidos`, y sync inmediato al recuperar conexión.
-- `hooks/use-speech-recognition.test.ts` — no duplica un resultado final reenviado por el motor de Android, no pierde un resultado interim que se finaliza mientras ya hay otro interim más adelante, y no duplica en cascada cuando cada "final" trae la frase completa acumulada en vez de solo la palabra nueva (los tres, bugs reales reportados en dispositivos Android).
-- `components/anomalia-modal.test.tsx` — `navigator.vibrate` (con guard porque jsdom no la implementa), texto condicional de promedio histórico, callbacks de confirmar/re-dictar.
-- `components/item-inventario-card.test.tsx` — el click para revisar una anomalía se deriva de si quedan alertas activas, no del booleano `esAnomalia` (que puede quedar desalineado de las alertas reales — ver Arquitectura).
-- `components/barcode-scanner-modal.test.tsx` — el stream de la cámara se conecta al `<video>` recién montado, no antes; si `getUserMedia` falla, no se muestra el video y queda la entrada manual.
-- `components/items-no-matcheados-card.test.tsx` — la cola persistente de ítems dictados sin match/ambiguos: reintentar, descartar, y elegir un candidato directamente en pantalla.
-- `components/alertas-revision-auditor.test.tsx` — solo lista alertas confirmadas por el operario y aún sin revisión de auditor; marcar revisada llama a la API y dispara el callback.
-- `components/acciones-cierre.test.tsx` — jerarquía de botones de cierre por rol/estado: consolidar deshabilitado con alertas activas, oculto para OPERARIO, "Enviar a ERP" en vez de "Consolidar" una vez `CONCILIADO`.
-- `app/inventario/[id]/inventario-page-content.test.tsx` — la pantalla compuesta de conteo: la selección manual de un candidato ambiguo deshabilita el dictado por voz/texto mientras esa escritura está en vuelo (regresión de una condición de carrera real — ver Arquitectura), igual que ya hacían el dictado por voz y el escaneo por SKU.
+- `lib/auth-storage.test.ts` — localStorage session, including corrupted JSON.
+- `lib/api.test.ts` — the `request<T>` wrapper: `Authorization` header, `ApiError` on network failure (status 0) vs. a non-2xx response, the guard that avoids redirecting to `/login` when the 401 comes from the login endpoint itself, and `getReporteVariacion`'s query-string construction.
+- `lib/voice-sanitize.test.ts` — `limpiarRepeticiones`, the helper that collapses repeated phrases that Android's speech recognition engine resends as duplicates.
+- `hooks/use-offline-sync.test.ts` — automatic retry of pending items with `intentos === 0`, no retry of already-failed ones unless `incluirFallidos`, and immediate sync on reconnection.
+- `hooks/use-speech-recognition.test.ts` — doesn't duplicate a final result re-sent by the Android engine, doesn't lose an interim result that finalizes while another later interim already exists, and doesn't cascade-duplicate when each "final" carries the full accumulated phrase instead of just the new word (all three are real bugs reported on Android devices).
+- `components/anomalia-modal.test.tsx` — `navigator.vibrate` (with a guard because jsdom doesn't implement it), conditional historical-average text, confirm/re-dictate callbacks.
+- `components/item-inventario-card.test.tsx` — the click to review an anomaly is derived from whether active alerts remain, not from the `esAnomalia` boolean (which can drift from the real alerts — see Architecture).
+- `components/barcode-scanner-modal.test.tsx` — the camera stream connects to the freshly mounted `<video>`, not before; if `getUserMedia` fails, the video isn't shown and manual entry remains.
+- `components/items-no-matcheados-card.test.tsx` — the persistent queue of dictated items with no match/ambiguous: retry, discard, and picking a candidate directly on screen.
+- `components/alertas-revision-auditor.test.tsx` — only lists alerts confirmed by the operator and still unreviewed by an auditor; marking as reviewed calls the API and fires the callback.
+- `components/acciones-cierre.test.tsx` — the role/state hierarchy of closing buttons: consolidate disabled with active alerts, hidden for `OPERARIO`, "Send to ERP" instead of "Consolidate" once `CONCILIADO`.
+- `app/inventario/[id]/inventario-page-content.test.tsx` — the composite counting screen: manually selecting an ambiguous candidate disables voice/text dictation while that write is in flight (regression test for a real race condition — see Architecture), the same way voice dictation and SKU scanning already did.
 
-**Umbral fijado en CI** (`test.coverage` en `client/vitest.config.ts`, aplicado con `npm run test:cov`): 73% statements / 60% branches / 52% funciones / 78% líneas, pero **acotado a 6 de los 12 archivos de arriba** (`coverage.include`: `auth-storage.ts`, `api.ts`, `voice-sanitize.ts`, `use-offline-sync.ts`, `use-speech-recognition.ts`, `anomalia-modal.tsx`), no a todo `client/src/`. Los otros 6 (`ItemInventarioCard`, `BarcodeScannerModal`, `ItemsNoMatcheadosCard`, `AlertasRevisionAuditor`, `AccionesCierre`, la pantalla de conteo) ya tienen tests reales pero todavía no cuentan para el umbral exigido en CI. Es más honesto un umbral alto sobre lo que ya está en `include` que uno bajo y vago sobre todo el proyecto — ampliar `include` es el paso natural cada vez que un archivo recién testeado se estabiliza.
+Threshold set in CI (`test.coverage` in `client/vitest.config.ts`, applied with `npm run test:cov`): 73% statements / 60% branches / 52% functions / 78% lines, but scoped to 6 of the 12 files above (`coverage.include`: `auth-storage.ts`, `api.ts`, `voice-sanitize.ts`, `use-offline-sync.ts`, `use-speech-recognition.ts`, `anomalia-modal.tsx`), not all of `client/src/`. The other 6 (`ItemInventarioCard`, `BarcodeScannerModal`, `ItemsNoMatcheadosCard`, `AlertasRevisionAuditor`, `AccionesCierre`, the counting screen) already have real tests but don't yet count toward the enforced CI threshold. A high threshold over what's already in `include` is more honest than a low, vague one over the whole project — expanding `include` is the natural next step every time a newly tested file stabilizes.
 
-Sin cubrir todavía: el resto de componentes sin test dedicado (`voice-capture.tsx`, `inventario-header.tsx`, `auditoria-ciega-card.tsx`, `cola-offline-indicator.tsx`, `account-menu.tsx`, `almacen-card.tsx`, `alerta-badge.tsx`), `offline-queue.ts` (IndexedDB), `export-erp.ts`, y las páginas fuera de `/inventario/[id]` (`/`, `/login`, `/reportes`, `/beneficios`) — pendiente de una capa de mocking de `fetch`/IndexedDB más amplia (tipo MSW) antes de abordarlas de forma sistemática.
+Not covered yet: the rest of the components without dedicated tests (`voice-capture.tsx`, `inventario-header.tsx`, `auditoria-ciega-card.tsx`, `cola-offline-indicator.tsx`, `account-menu.tsx`, `almacen-card.tsx`, `alerta-badge.tsx`), `offline-queue.ts` (IndexedDB), `export-erp.ts`, and the pages outside `/inventario/[id]` (`/`, `/login`, `/reportes`, `/beneficios`) — pending a broader fetch/IndexedDB mocking layer (something like MSW) before tackling them systematically.
 
-## Estructura del dominio
+## Domain structure
 
 ```
 Usuario (OPERARIO | AUDITOR | ADMIN)
-Almacen (bodega o punto de consumo)
-Articulo (catálogo maestro, sku opcional, aliases para matching por voz)
-Inventario (toma física de un almacén en una fecha de corte)
-  -> ItemInventario (línea: teórico del ERP vs. conteo físico)
-  -> AlertaInventario (anomalía detectada, bloquea consolidación hasta resolverse)
-  -> auditoriaCiega (segunda toma independiente del mismo almacén, para comparar)
+Almacen (warehouse or point of consumption)
+Articulo (master catalog, optional sku, aliases for voice matching)
+Inventario (physical count of a warehouse as of a cutoff date)
+  -> ItemInventario (line: ERP theoretical vs. physical count)
+  -> AlertaInventario (detected anomaly, blocks consolidation until resolved)
+  -> auditoriaCiega (second independent count of the same warehouse, for comparison)
 ```
 
-`Inventario.usuarioId`/`auditorId` son strings planos, deliberadamente sin foreign key hacia `Usuario`: son un registro histórico de quién hizo cada toma (como un log de auditoría) que debe sobrevivir aunque la cuenta se elimine después. La identidad se verifica en cada petición vía el JWT, no por integridad referencial en la base de datos.
+`Inventario.usuarioId`/`auditorId` are plain strings, deliberately without a foreign key to `Usuario`: they're a historical record of who performed each count (like an audit log) that must survive even if the account is later deleted. Identity is verified on every request via the JWT, not through referential integrity in the database.
 
-## Limitaciones conocidas y próximos pasos
+## Known limitations and next steps
 
-En orden aproximado de impacto:
+In roughly descending order of impact:
 
-1. Sin Dockerfile para `server`/`client` — no hay forma de construir una imagen desplegable todavía, solo de correr en local.
-2. `npm audit` — desglosado por paquete, ninguno tiene un fix trivial disponible hoy:
-   - `exceljs` (`^4.4.0`, dependency de producción): marcado alto vía `archiver`/`uuid` transitivos, pero el rango marcado es `>=3.5.0` — no existe ninguna versión ≥3.5.0 sin el hallazgo; la única "fix" que ofrece `npm audit fix --force` es bajar a 3.4.0 (breaking, más vieja, sin garantía de estar mejor). `server/src/scripts/import-excel.ts` solo lee archivos (`readFile`/`getWorksheet`/`eachRow`/`getCell().value`), nunca escribe — la ruta de `archiver` (creación de zip), que es donde vive la vulnerabilidad, nunca se ejecuta en este código. Riesgo real: prácticamente nulo, sin fix limpio disponible upstream todavía.
-   - `prisma` (CLI, devDependency, `^7.9.0`): el hallazgo (`@prisma/dev`→`find-my-way`) es del comando `prisma dev` (levanta un servidor local), que este proyecto nunca ejecuta (solo `migrate dev`/`db seed`/`generate` vía npm scripts), y el CLI no se despliega junto al server. `@prisma/client`/`@prisma/adapter-pg`, los paquetes que sí corren en producción, no tienen hallazgos.
-   - `eslint`/`jest`/`ts-jest`/`@nestjs/cli` (devDependencies): las "fix" que sugiere `npm audit` son downgrades mayores (p. ej. jest→19.0.2, eslint→10.8.0) que romperían todo el toolchain de build/test para resolver hallazgos sin superficie de ataque real — nada de input no confiable llega a herramientas de desarrollo.
-   - `next`/`postcss` (client): severidad alta, confirmado, solo se arregla con una migración mayor de Next 14 a 16 — se deja deliberadamente fuera de alcance como un esfuerzo aparte, no algo para meter de paso.
-3. Sin observabilidad: logs solo van a stdout, sin agregador ni APM. Un incidente en producción hoy solo se diagnostica con acceso directo al proceso.
-4. Rate limiting en memoria del proceso: válido para una sola instancia; escalar horizontalmente requeriría un storage compartido (Redis) para el throttler — deliberadamente no implementado todavía, prematuro para un prototipo de una sola instancia.
-5. Tests e2e (server) y de cliente ya existen pero con alcance acotado: falta cubrir la llamada saliente real al ERP y la comparación de auditoría ciega en server; en client, la pantalla principal de conteo ya tiene test (`inventario-page-content.test.tsx`) pero varios componentes secundarios y las páginas fuera de `/inventario/[id]` todavía no — ver sección Tests para el detalle exacto de qué queda fuera.
-6. ~~Matching de voz contra el catálogo real: 8.3% de ambigüedad silenciosa.~~ **Resuelto.** Una auditoría real (`npm run audit:voice-matching` en `server`, contra los 938 artículos del catálogo, no fixtures sintéticos) encontró que el 8.3% (78/938) resolvía en silencio a OTRO artículo del catálogo, con score de confianza alto — la app no tenía ninguna señal para distinguir un match correcto de uno incorrecto igual de "seguro". Se corrigió con 3 cambios: (a) `ArticuloService.normalizarEntradaHablada` ahora pide el top-3 (no solo el top-1) y, si el runner-up queda a menos de `AMBIGUEDAD_GAP` (0.3) de distancia, no auto-confirma ninguno — el ítem cae en `itemsNoMatcheados` con un `motivo` que nombra los candidatos, en vez de adivinar; (b) `normalizeSpokenText` dejó de descartar números que en realidad identifican al producto (talla, calibre, mililitros); (c) `buildAliases` ahora también genera categoría+último calificador (`"cebolla roja"`, no solo `"cebolla cabezona"`), para que la variante corta más natural de decir ya distinga color/tamaño. Resultado tras el fix: **0/938 matches incorrectos silenciosos** (antes 78); 175/938 (18.7%) ahora piden precisión al operario en vez de auto-confirmar — el trade-off elegido a propósito, con datos, en favor de nunca fallar en silencio. Detalle completo en `server/README.md`.
+- **No Dockerfile for server/client** — there's no way to build a deployable image yet, only to run locally.
 
-7. ~~Segregación de funciones: un OPERARIO podía auto-resolver su propia anomalía.~~ **Resuelto.** Una auditoría de la lógica de negocio desde la perspectiva de operario/auditor encontró que `PATCH /inventarios/:id/alertas/:alertaId/resolver` no tenía `@Roles()` (a diferencia de sus vecinos `cambiarEstado`/`crearAuditoriaCiega`) — confirmado empíricamente contra el server real: con el token del propio OPERARIO que causó una `ANOMALIA_CANTIDAD` del 931%, el mismo pudo resolverla (200 OK), sin ninguna revisión independiente. Esto anulaba en la práctica el principio central de "toda anomalía bloquea hasta que alguien la revise" (ver sección "Anomaly detection" en `CLAUDE.md`). Se corrigió separando dos conceptos que antes compartían un solo campo (`resuelto`): el auto-chequeo del operario (confirma en el momento que no fue un error de dictado — sigue sin restricción de rol, UX intacta) y la revisión de auditoría real (`AlertaInventario.revisadoPorAuditor`, nuevo endpoint `PATCH .../revisar` restringido a `AUDITOR`/`ADMIN`, con `revisadoPor`/`revisadoEn` para dejar rastro). `cambiarEstado` a `CONCILIADO`/`ENVIADO_ERP` ahora exige ambos pasos, no solo el primero. De paso se cerró el mismo hueco en `GET /inventarios/:id/comparacion-auditoria` (visible para cualquier OPERARIO, rompiendo el sentido de la auditoría "ciega"). Detalle completo en `server/README.md`.
+- **npm audit** — broken down by package, none has a trivial fix available today:
+  - `exceljs` (^4.4.0, production dependency): flagged high via transitive `archiver`/`uuid`, but the flagged range is `>=3.5.0` — there's no version ≥3.5.0 without the finding; the only "fix" `npm audit fix --force` offers is downgrading to 3.4.0 (breaking, older, no guarantee it's actually better). `server/src/scripts/import-excel.ts` only reads files (`readFile`/`getWorksheet`/`eachRow`/`getCell().value`), never writes — the `archiver` code path (zip creation), which is where the vulnerability lives, never runs in this code. Real risk: essentially nil, no clean upstream fix available yet.
+  - `prisma` (CLI, devDependency, ^7.9.0): the finding (`@prisma/dev`→`find-my-way`) is in the `prisma dev` command (spins up a local server), which this project never runs (only `migrate dev`/`db seed`/`generate` via npm scripts), and the CLI isn't deployed alongside the server. `@prisma/client`/`@prisma/adapter-pg`, the packages that actually run in production, have no findings.
+  - `eslint`/`jest`/`ts-jest`/`@nestjs/cli` (devDependencies): the "fixes" `npm audit` suggests are major downgrades (e.g. `jest`→19.0.2, `eslint`→10.8.0) that would break the entire build/test toolchain to resolve findings with no real attack surface — no untrusted input reaches development tools.
+  - `next`/`postcss` (client): high severity, confirmed, only fixable with a major migration from Next 14 to 16 — deliberately left out of scope as a separate effort, not something to squeeze in along the way.
 
-8. ~~Escritura de una línea contada no era atómica; deduplicación de alertas dependía de una carrera de aplicación; texto de desambiguación vivía en el módulo equivocado; una escritura del cliente no bloqueaba dictados concurrentes.~~ **Resuelto.** Una auditoría de arquitectura (SOLID/DRY, sin bugs reportados por un usuario — hallazgos propios de revisar `InventarioService`/`InventarioRepository` a fondo) encontró cuatro problemas reales:
-   - **Atomicidad.** `procesarLineaArticulo` hacía varias escrituras Prisma secuenciales sueltas (incremento, evaluación de anomalías, alertas) — una falla a mitad de camino podía dejar el conteo aplicado pero la alerta correspondiente sin crear, o viceversa. Ahora todo corre dentro de una única transacción (`InventarioRepository.ejecutarEnTransaccion`), verificado con 3 tests unitarios nuevos que confirman que cada escritura recibe el mismo `Prisma.TransactionClient` y que un error a mitad de la secuencia revierte todo.
-   - **Condición de carrera real (TOCTOU) en deduplicación de alertas.** `crearAlertas` deduplicaba con un check-then-act en código de aplicación (leer alertas activas → filtrar → insertar) — no atómico: dos dictados genuinamente simultáneos del mismo ítem (dos operarios contando la misma bodega, o un reintento de red) podían leer "0 activas" los dos antes de que cualquiera insertara, colando el duplicado que ese código ya intentaba evitar. Se cerró a nivel de base de datos con un índice único parcial de Postgres sobre `(itemInventarioId, tipo)` (solo activo mientras la alerta sigue sin resolver) más `skipDuplicates: true`, y se verificó con un e2e que dispara 10 dictados HTTP concurrentes de verdad (`Promise.all`, no secuenciales) contra el mismo ítem.
-   - **SRP.** `describirMotivoNoMatch`/`sugerenciaDesambiguacion` (el texto que le dice al operario qué agregar para desambiguar dos candidatos) vivían como métodos privados de `InventarioService`, que además tenía que importar `VoiceMatchResult` de `articulos` solo para tipar un parámetro. Se movieron a `articulo-text.util.ts` (mismo módulo que ya tiene el resto de utilidades de texto de matching por voz) como funciones puras, con sus propios tests unitarios directos — sin cambio de comportamiento, verificado contra el server real con el mismo par ambiguo "PAPA CRIOLLA"/"PAPA CRIOLLA PRECOCIDA".
-   - **Client: `handleElegirCandidato` no bloqueaba el dictado mientras escribía.** A diferencia del dictado por voz y el escaneo por SKU, seleccionar un candidato ambiguo en pantalla no marcaba `procesandoVoz` — el input de voz/texto seguía habilitado mientras esa escritura estaba en vuelo. Como `aplicarResultado` reemplaza el inventario completo con el snapshot que devuelve cada respuesta (no hace merge), un dictado disparado en esa ventana podía responder primero y luego ser pisado por la respuesta más lenta de la selección manual, borrando de pantalla un ítem que sí se había registrado. Corregido igualando el patrón de `handleProcesar`/`handleProcesarSku`; requirió extraer la pantalla de conteo (`InventarioPageContent`) de `app/inventario/[id]/page.tsx` a `inventario-page-content.tsx` para poder testearla (las rutas de Next.js App Router solo pueden exportar nombres reservados), con un test que reproduce la carrera exacta.
+- **No observability**: logs only go to stdout, no aggregator or APM. A production incident today can only be diagnosed with direct access to the process.
 
-## Licencia
+- **In-process-memory rate limiting**: valid for a single instance; scaling horizontally would require shared storage (Redis) for the throttler — deliberately not implemented yet, premature for a single-instance prototype.
 
-Proyecto desarrollado para la gestión de inventarios. Sin licencia de código abierto publicada — uso restringido salvo indicación contraria.
+- **e2e (server) and client tests already exist but with a bounded scope**: still missing coverage of the real outbound ERP call and the blind-audit comparison beyond role authorization on the server; on the client, the main counting screen already has a test (`inventario-page-content.test.tsx`) but several secondary components and the pages outside `/inventario/[id]` don't yet — see the Tests section for the exact detail of what's left out.
+
+- **Voice matching against the real catalog: 8.3% silent ambiguity. Resolved.** A real audit (`npm run audit:voice-matching` in `server`, against the real 938-item catalog, not synthetic fixtures) found that 8.3% (78/938) silently resolved to a *different* catalog item, with a high confidence score — the app had no signal to distinguish a correct match from an equally "confident" incorrect one. Fixed with 3 changes: (a) `ArticuloService.normalizarEntradaHablada` now requests the top-3 (not just the top-1) and, if the runner-up is within `AMBIGUEDAD_GAP` (0.3) of the top match, it doesn't auto-confirm either — the item falls into `itemsNoMatcheados` with a reason naming the candidates, instead of guessing; (b) `normalizeSpokenText` stopped discarding numbers that actually identify the product (size, gauge, milliliters); (c) `buildAliases` now also generates category+last qualifier ("red onion", not just "yellow onion"), so the more natural short way of saying it already distinguishes color/size. Result after the fix: 0/938 silent incorrect matches (was 78); 175/938 (18.7%) now ask the operator for precision instead of auto-confirming — a trade-off chosen deliberately, with data, in favor of never failing silently. Full detail in `server/README.md`.
+
+- **Segregation of duties: an OPERARIO could self-resolve their own anomaly. Resolved.** A business-logic audit from the operator/auditor perspective found that `PATCH /inventarios/:id/alertas/:alertaId/resolver` had no `@Roles()` (unlike its neighbors `cambiarEstado`/`crearAuditoriaCiega`) — confirmed empirically against the real server: with the token of the very `OPERARIO` who caused a 931% `ANOMALIA_CANTIDAD`, that same user was able to resolve it (200 OK), with no independent review at all. In practice this nullified the central principle that "every anomaly blocks until someone reviews it" (see the "Anomaly detection" section in `CLAUDE.md`). Fixed by separating two concepts that used to share a single field (`resuelto`): the operator's self-check (confirms on the spot that it wasn't a dictation error — still unrestricted by role, UX unchanged) and the real audit review (`AlertaInventario.revisadoPorAuditor`, a new `PATCH .../revisar` endpoint restricted to `AUDITOR`/`ADMIN`, with `revisadoPor`/`revisadoEn` to leave a trail). `cambiarEstado` to `CONCILIADO`/`ENVIADO_ERP` now requires both steps, not just the first. The same hole was closed in `GET /inventarios/:id/comparacion-auditoria` (visible to any `OPERARIO`, defeating the point of a "blind" audit). Full detail in `server/README.md`.
+
+- **A counted line's write wasn't atomic; alert deduplication depended on an application-level race; disambiguation text lived in the wrong module; a client write didn't block concurrent dictations. Resolved.** An architecture audit (SOLID/DRY, not user-reported bugs — findings from a thorough review of `InventarioService`/`InventarioRepository`) found four real problems:
+  1. **Atomicity.** `procesarLineaArticulo` performed several loose sequential Prisma writes (increment, anomaly evaluation, alerts) — a failure partway through could leave the count applied but its corresponding alert uncreated, or vice versa. Now everything runs inside a single transaction (`InventarioRepository.ejecutarEnTransaccion`), verified with 3 new unit tests confirming every write receives the same `Prisma.TransactionClient` and that an error midway through the sequence rolls everything back.
+  2. **Real race condition (TOCTOU) in alert deduplication.** `crearAlertas` deduplicated with a check-then-act in application code (read active alerts → filter → insert) — not atomic: two genuinely simultaneous dictations of the same item (two operators counting the same warehouse, or a network retry) could both read "0 active" before either inserted, letting through the exact duplicate that code was already trying to prevent. Closed at the database level with a Postgres partial unique index on `(itemInventarioId, tipo)` (active only while the alert remains unresolved) plus `skipDuplicates: true`, verified with an e2e test that fires 10 genuinely concurrent HTTP dictations (`Promise.all`, not sequential) against the same item.
+  3. **SRP.** `describirMotivoNoMatch`/`sugerenciaDesambiguacion` (the text that tells the operator what to add to disambiguate two candidates) lived as private methods of `InventarioService`, which on top of that had to import `VoiceMatchResult` from `articulos` just to type a parameter. Moved to `articulo-text.util.ts` (the same module that already holds the rest of the voice-matching text utilities) as pure functions, with their own direct unit tests — no behavior change, verified against the real server with the same ambiguous pair "PAPA CRIOLLA"/"PAPA CRIOLLA PRECOCIDA".
+  4. **Client: `handleElegirCandidato` didn't block dictation while it wrote.** Unlike voice dictation and SKU scanning, selecting an ambiguous candidate on screen didn't set `procesandoVoz` — voice/text input stayed enabled while that write was in flight. Since `aplicarResultado` replaces the entire inventory with the snapshot each response returns (it doesn't merge), a dictation fired in that window could respond first and then get overwritten by the slower response from the manual selection, wiping an item from the screen that had in fact been registered. Fixed by matching the pattern already used by `handleProcesar`/`handleProcesarSku`; required extracting the counting screen (`InventarioPageContent`) from `app/inventario/[id]/page.tsx` into `inventario-page-content.tsx` so it could be tested directly (Next.js App Router routes can only export reserved names), with a test that reproduces the exact race.
+
+## License
+
+Project developed for inventory management. No open-source license published — restricted use unless stated otherwise.
