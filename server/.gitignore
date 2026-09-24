@@ -7,7 +7,7 @@ node_modules
 # Reporte generado por `test:cov` — se regenera en cada corrida, no aporta versionado.
 /coverage
 
-# Datos reales de negocio (Colsubsidio) usados para la ingesta masiva.
+# Datos reales de negocio (catálogo del cliente) usados para la ingesta masiva.
 /data
 
 # Reporte generado por `audit:voice-matching` sobre el catálogo real.
