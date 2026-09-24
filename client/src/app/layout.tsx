@@ -3,7 +3,7 @@ import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
 /*
- * TIPOGRAFÍA CORPORATIVA COLSUBSIDIO / INVENCHECK
+ * TIPOGRAFÍA CORPORATIVA INVENCHECK
  * Inter  → texto principal (legible en pantallas de bodega)
  * JetBrains Mono → cantidades, códigos, referencia numérica
  * Variables CSS conectadas con tailwind.config.ts fontFamily
@@ -51,7 +51,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
-  /* themeColor = Azul Colsubsidio oficial #0067B1 */
+  /* themeColor = Azul corporativo #0067B1 */
   themeColor: "#0067B1",
 };
 
