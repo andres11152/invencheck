@@ -32,7 +32,7 @@ CREATE UNIQUE INDEX "organizaciones_slug_key" ON "organizaciones"("slug");
 -- tener que resolverlo por nombre en cada arranque.
 -- Ver ORGANIZACION_LEGADO_ID en src/prisma/organizacion-legado.ts.
 INSERT INTO "organizaciones" ("id", "nombre", "slug", "plan", "createdAt", "updatedAt")
-VALUES ('org-colsubsidio-legacy', 'Colsubsidio', 'colsubsidio', 'ENTERPRISE', now(), now())
+VALUES ('org-legacy', 'Legacy Org', 'legacy', 'ENTERPRISE', now(), now())
 ON CONFLICT ("id") DO NOTHING;
 
 -- Paso 1: columnas NULLABLE, para poder rellenarlas antes de exigirlas.
@@ -44,10 +44,10 @@ ALTER TABLE "items_inventario"   ADD COLUMN "organizacionId" TEXT;
 ALTER TABLE "alertas_inventario" ADD COLUMN "organizacionId" TEXT;
 
 -- Paso 2: backfill. Todo lo preexistente pertenece a la organización de legado.
-UPDATE "usuarios"           SET "organizacionId" = 'org-colsubsidio-legacy' WHERE "organizacionId" IS NULL;
-UPDATE "almacenes"          SET "organizacionId" = 'org-colsubsidio-legacy' WHERE "organizacionId" IS NULL;
-UPDATE "articulos"          SET "organizacionId" = 'org-colsubsidio-legacy' WHERE "organizacionId" IS NULL;
-UPDATE "inventarios"        SET "organizacionId" = 'org-colsubsidio-legacy' WHERE "organizacionId" IS NULL;
+UPDATE "usuarios"           SET "organizacionId" = 'org-legacy' WHERE "organizacionId" IS NULL;
+UPDATE "almacenes"          SET "organizacionId" = 'org-legacy' WHERE "organizacionId" IS NULL;
+UPDATE "articulos"          SET "organizacionId" = 'org-legacy' WHERE "organizacionId" IS NULL;
+UPDATE "inventarios"        SET "organizacionId" = 'org-legacy' WHERE "organizacionId" IS NULL;
 -- Estos dos son desnormalizaciones: se derivan del inventario padre, pero se
 -- materializan para que las policies de RLS puedan evaluarse sin join.
 UPDATE "items_inventario" i
