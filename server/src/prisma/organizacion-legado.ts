@@ -5,5 +5,5 @@
  * los scripts CLI y los fixtures de e2e lo referencian por constante en vez
  * de tener que resolverlo por nombre/slug en cada arranque.
  */
-export const ORGANIZACION_LEGADO_ID = 'org-colsubsidio-legacy';
-export const ORGANIZACION_LEGADO_SLUG = 'colsubsidio';
+export const ORGANIZACION_LEGADO_ID = 'org-legacy';
+export const ORGANIZACION_LEGADO_SLUG = 'legacy';
