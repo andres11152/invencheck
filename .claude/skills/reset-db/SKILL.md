@@ -1,6 +1,6 @@
 ---
 name: reset-db
-description: Reset the local InvenCheck database to a clean, working state — seed demo users/warehouses and restore the real 936-article Colsubsidio catalog. Use when the DB is missing data, has bad test data, after running prisma:seed alone, or when setting up the project for the first time.
+description: Reset the local InvenCheck database to a clean, working state — seed demo users/warehouses and restore the real 936-article catalog. Use when the DB is missing data, has bad test data, after running prisma:seed alone, or when setting up the project for the first time.
 ---
 
 # Resetting the local database
